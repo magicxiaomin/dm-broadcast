@@ -4,6 +4,7 @@ import { loadLocalEnv } from "./load-local-env.mjs";
 loadLocalEnv();
 
 const apiBase = process.env.DM_API_BASE || "https://dm-broadcast-api.magicxiaomin.workers.dev";
+const adminToken = process.env.DM_ADMIN_TOKEN || "";
 const deviceId = process.env.DM_DEVICE_ID || await findDefaultDeviceId();
 const contactJid = process.env.DM_REAL_CONTACT_JID || "85255804693@s.whatsapp.net";
 const adbBin = process.env.ADB_BIN || `${process.env.HOME}/Library/Android/sdk/platform-tools/adb`;
@@ -26,6 +27,7 @@ async function api(path, options = {}) {
     ...options,
     headers: {
       "content-type": "application/json",
+      ...(adminToken ? { authorization: `Bearer ${adminToken}` } : {}),
       ...(options.headers || {}),
     },
   });
@@ -191,6 +193,16 @@ async function checkCloudflareDeploy() {
   } else {
     record("cloudflare-deploy-token", "warn", {
       message: "No CLOUDFLARE_API_TOKEN; Worker API deploy is not available from this shell.",
+    });
+  }
+
+  if (process.env.DM_ADMIN_TOKEN && process.env.DM_DEVICE_TOKEN) {
+    record("worker-auth-tokens", "pass", {
+      message: "DM_ADMIN_TOKEN and DM_DEVICE_TOKEN are present for protected Worker smoke tests.",
+    });
+  } else {
+    record("worker-auth-tokens", "warn", {
+      message: "Set DM_ADMIN_TOKEN and DM_DEVICE_TOKEN before running protected online smoke or real E2E scripts.",
     });
   }
 }

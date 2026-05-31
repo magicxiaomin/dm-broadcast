@@ -5,12 +5,22 @@ import { Miniflare } from "miniflare";
 const scriptPath = new URL("../apps/worker/src/index.ts", import.meta.url).pathname;
 const schemaPath = new URL("../apps/worker/migrations/0001_initial.sql", import.meta.url).pathname;
 const bundledScriptPath = new URL("../outputs/worker-safety-smoke.mjs", import.meta.url).pathname;
+const ADMIN_TOKEN = "worker-safety-admin-token";
+const DEVICE_TOKEN = "worker-safety-device-token";
 
-async function api(mf, path, options = {}) {
+function authHeaders(role) {
+  if (role === "admin") return { authorization: `Bearer ${ADMIN_TOKEN}` };
+  if (role === "device") return { authorization: `Bearer ${DEVICE_TOKEN}` };
+  if (role === "wrong") return { authorization: "Bearer wrong-worker-safety-token" };
+  return {};
+}
+
+async function api(mf, path, options = {}, role = "admin") {
   const res = await mf.dispatchFetch(`http://worker.test${path}`, {
     ...options,
     headers: {
       "content-type": "application/json",
+      ...authHeaders(role),
       ...(options.headers || {}),
     },
   });
@@ -19,6 +29,21 @@ async function api(mf, path, options = {}) {
     throw new Error(`${path} failed: ${JSON.stringify(data)}`);
   }
   return data;
+}
+
+async function expectStatus(mf, label, path, options, role, expectedStatuses) {
+  const res = await mf.dispatchFetch(`http://worker.test${path}`, {
+    ...options,
+    headers: {
+      "content-type": "application/json",
+      ...authHeaders(role),
+      ...(options?.headers || {}),
+    },
+  });
+  if (!expectedStatuses.includes(res.status)) {
+    const body = await res.text();
+    throw new Error(`${label}: expected ${expectedStatuses.join("/")} for ${path}, got ${res.status}: ${body}`);
+  }
 }
 
 await build({
@@ -37,6 +62,7 @@ const mf = new Miniflare({
   compatibilityDate: "2026-05-30",
   d1Databases: { DB: "DB" },
   kvNamespaces: { STATE: "STATE" },
+  bindings: { ADMIN_TOKEN, DEVICE_TOKEN },
 });
 
 try {
@@ -45,6 +71,22 @@ try {
   for (const statement of schema.split(";").map((item) => item.trim()).filter(Boolean)) {
     await db.prepare(statement).run();
   }
+
+  await expectStatus(mf, "health public", "/health", { method: "GET" }, null, [200]);
+  await expectStatus(mf, "campaign requires token", "/v1/campaigns", {
+    method: "POST",
+    body: JSON.stringify({ title: "blocked", message: "blocked", contacts: [] }),
+  }, null, [401]);
+  await expectStatus(mf, "events require token", "/v1/events", {
+    method: "POST",
+    body: JSON.stringify({ eventType: "read", taskId: "missing" }),
+  }, null, [401]);
+  await expectStatus(mf, "pull requires token", "/v1/tasks/pull?deviceId=missing&limit=1", { method: "GET" }, null, [401]);
+  await expectStatus(mf, "wrong token rejected", "/v1/tasks/pull?deviceId=missing&limit=1", { method: "GET" }, "wrong", [401]);
+  await expectStatus(mf, "device token cannot call admin route", "/v1/campaigns", {
+    method: "POST",
+    body: JSON.stringify({ title: "blocked", message: "blocked", contacts: [] }),
+  }, "device", [401, 403]);
 
   await api(mf, "/v1/devices/register", {
     method: "POST",
@@ -58,7 +100,7 @@ try {
         risk_reason: "smoke",
       },
     }),
-  });
+  }, "device");
 
   await api(mf, "/v1/campaigns", {
     method: "POST",
@@ -69,19 +111,19 @@ try {
       points: 1,
       contacts: [{ name: "paused", jid: "paused@s.whatsapp.net" }],
     }),
-  });
+  }, "admin");
 
-  const pausedPull = await api(mf, "/v1/tasks/pull?deviceId=safety-paused-device&limit=1");
+  const pausedPull = await api(mf, "/v1/tasks/pull?deviceId=safety-paused-device&limit=1", {}, "device");
   if (!pausedPull.paused || pausedPull.tasks.length !== 0) {
     throw new Error(`risk-stopped device should not receive tasks: ${JSON.stringify(pausedPull)}`);
   }
 
-  const pending = await api(mf, "/v1/tasks?status=pending&limit=10");
+  const pending = await api(mf, "/v1/tasks?status=pending&limit=10", {}, "admin");
   if (!pending.tasks.some((task) => task.device_id === "safety-paused-device")) {
     throw new Error("paused device task was unexpectedly claimed or missing");
   }
 
-  const dashboard = await api(mf, "/v1/dashboard");
+  const dashboard = await api(mf, "/v1/dashboard", {}, "admin");
   const device = dashboard.devices.find((item) => item.id === "safety-paused-device");
   if (!device || device.safety_status !== "risk_stopped") {
     throw new Error(`dashboard did not expose device safety: ${JSON.stringify(device)}`);
@@ -99,7 +141,7 @@ try {
         risk_reason: "long-retry",
       },
     }),
-  });
+  }, "device");
   await db.prepare(
     "UPDATE devices SET safety_updated_at = ?, updated_at = ? WHERE id = ?",
   ).bind(Date.now() - 10 * 60 * 1000, Date.now() - 10 * 60 * 1000, "safety-long-retry-device").run();
@@ -112,8 +154,8 @@ try {
       points: 1,
       contacts: [{ name: "long", jid: "long@s.whatsapp.net" }],
     }),
-  });
-  const longRetryPull = await api(mf, "/v1/tasks/pull?deviceId=safety-long-retry-device&limit=1");
+  }, "admin");
+  const longRetryPull = await api(mf, "/v1/tasks/pull?deviceId=safety-long-retry-device&limit=1", {}, "device");
   if (!longRetryPull.paused || longRetryPull.tasks.length !== 0) {
     throw new Error(`unexpired retry-after should pause even with old safety_updated_at: ${JSON.stringify(longRetryPull)}`);
   }
@@ -130,7 +172,7 @@ try {
         risk_reason: "expired",
       },
     }),
-  });
+  }, "device");
   await db.prepare(
     "UPDATE devices SET safety_updated_at = ?, updated_at = ? WHERE id = ?",
   ).bind(Date.now() - 10 * 60 * 1000, Date.now() - 10 * 60 * 1000, "safety-expired-device").run();
@@ -143,8 +185,8 @@ try {
       points: 1,
       contacts: [{ name: "expired", jid: "expired@s.whatsapp.net" }],
     }),
-  });
-  const expiredPull = await api(mf, "/v1/tasks/pull?deviceId=safety-expired-device&limit=1");
+  }, "admin");
+  const expiredPull = await api(mf, "/v1/tasks/pull?deviceId=safety-expired-device&limit=1", {}, "device");
   if (expiredPull.paused || expiredPull.tasks.length !== 1) {
     throw new Error(`expired retry-after should allow claim: ${JSON.stringify(expiredPull)}`);
   }
@@ -157,7 +199,7 @@ try {
       status: "online",
       safety: { risk_stopped: false },
     }),
-  });
+  }, "device");
   await api(mf, "/v1/campaigns", {
     method: "POST",
     body: JSON.stringify({
@@ -167,8 +209,8 @@ try {
       points: 1,
       contacts: [{ name: "ready", jid: "ready@s.whatsapp.net" }],
     }),
-  });
-  const readyPull = await api(mf, "/v1/tasks/pull?deviceId=safety-ready-device&limit=1");
+  }, "admin");
+  const readyPull = await api(mf, "/v1/tasks/pull?deviceId=safety-ready-device&limit=1", {}, "device");
   if (readyPull.paused || readyPull.tasks.length !== 1) {
     throw new Error(`ready device should receive one task: ${JSON.stringify(readyPull)}`);
   }
@@ -182,23 +224,23 @@ try {
       eventType: "message_failed",
       payload: { source: "worker-safety-smoke", reason: "exercise_requeue" },
     }),
-  });
+  }, "device");
   await api(mf, "/v1/tasks/requeue", {
     method: "POST",
     body: JSON.stringify({ taskId: requeueTaskId, reason: "worker-safety-smoke" }),
-  });
-  const requeuedPending = await api(mf, "/v1/tasks?status=pending&limit=20");
+  }, "admin");
+  const requeuedPending = await api(mf, "/v1/tasks?status=pending&limit=20", {}, "admin");
   if (!requeuedPending.tasks.some((task) => task.id === requeueTaskId)) {
     throw new Error(`requeued task did not return to pending: ${requeueTaskId}`);
   }
-  const requeuedPull = await api(mf, "/v1/tasks/pull?deviceId=safety-ready-device&limit=1");
+  const requeuedPull = await api(mf, "/v1/tasks/pull?deviceId=safety-ready-device&limit=1", {}, "device");
   if (requeuedPull.tasks[0]?.id !== requeueTaskId) {
     throw new Error(`requeued task was not claimable: ${JSON.stringify(requeuedPull)}`);
   }
   await db.prepare(
     "UPDATE tasks SET updated_at = ? WHERE id = ? AND status = 'claimed'",
   ).bind(Date.now() - 20 * 60 * 1000, requeueTaskId).run();
-  const staleClaimPull = await api(mf, "/v1/tasks/pull?deviceId=safety-ready-device&limit=1");
+  const staleClaimPull = await api(mf, "/v1/tasks/pull?deviceId=safety-ready-device&limit=1", {}, "device");
   if (staleClaimPull.tasks[0]?.id !== requeueTaskId) {
     throw new Error(`stale claimed task was not released and claimable: ${JSON.stringify(staleClaimPull)}`);
   }
@@ -217,7 +259,7 @@ try {
       status: "online",
       safety: { risk_stopped: false },
     }),
-  });
+  }, "device");
   await api(mf, "/v1/campaigns", {
     method: "POST",
     body: JSON.stringify({
@@ -227,8 +269,8 @@ try {
       points: 7,
       contacts: [{ name: "ack", jid: "ack@s.whatsapp.net" }],
     }),
-  });
-  const ackPull = await api(mf, "/v1/tasks/pull?deviceId=ack-read-device&limit=1");
+  }, "admin");
+  const ackPull = await api(mf, "/v1/tasks/pull?deviceId=ack-read-device&limit=1", {}, "device");
   const ackTask = ackPull.tasks[0];
   if (!ackTask) {
     throw new Error(`ack-read task was not claimable: ${JSON.stringify(ackPull)}`);
@@ -245,7 +287,7 @@ try {
         server_msg_id: "server-ack-read-smoke",
       },
     }),
-  });
+  }, "device");
   const ackEvent = await api(mf, "/v1/events", {
     method: "POST",
     body: JSON.stringify({
@@ -256,7 +298,7 @@ try {
         ack_level: 2,
       },
     }),
-  });
+  }, "device");
   if (ackEvent.taskId !== ackTask.id) {
     throw new Error(`message_ack was not correlated by server_msg_id: ${JSON.stringify(ackEvent)}`);
   }

@@ -35,6 +35,7 @@ const state = {
   authenticated: sessionStorage.getItem(AUTH_STORAGE_KEY) === AUTH_VALUE,
   page: (localStorage.getItem("dm.page") as PageKey) || "overview",
   apiBase: localStorage.getItem("dm.apiBase") || API_DEFAULT,
+  adminToken: localStorage.getItem("dm.adminToken") || "",
   dashboard: null as Dashboard | null,
   contacts: [] as Row[],
   contactFilter: "",
@@ -75,6 +76,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
     headers: {
       "content-type": "application/json",
+      ...(state.adminToken ? { authorization: `Bearer ${state.adminToken}` } : {}),
       ...(init.headers || {}),
     },
   });
@@ -143,19 +145,6 @@ async function createCampaign(event: Event) {
     state.message = `创建失败：${error instanceof Error ? error.message : String(error)}`;
   } finally {
     state.loading = false;
-    render();
-  }
-}
-
-async function markRead(taskId: string) {
-  try {
-    await api("/v1/events", {
-      method: "POST",
-      body: JSON.stringify({ taskId, eventType: "read", payload: { source: "web_acceptance" } }),
-    });
-    await refresh("已写入 read 事件并触发积分入账");
-  } catch (error) {
-    state.message = `入账失败：${error instanceof Error ? error.message : String(error)}`;
     render();
   }
 }
@@ -409,9 +398,6 @@ function taskActions(task: Row) {
   const status = String(task.status || "");
   const taskId = String(task.id || "");
   const actions: Array<Node | string> = [];
-  if (status === "sent" || status === "claimed") {
-    actions.push(el("button", { type: "button", class: "btn ghost sm", text: "验收已读", onclick: () => markRead(taskId) }));
-  }
   if (status === "failed" || status === "claimed") {
     actions.push(el("button", { type: "button", class: "btn outline sm", text: "重新排队", onclick: () => requeueTask(taskId) }));
   }
@@ -452,12 +438,24 @@ function renderShell(content: Node[]) {
           el("div", {}, [el("h1", { text: current.label }), el("p", { text: current.desc })]),
           el("form", { class: "api-form", onsubmit: (event: Event) => {
             event.preventDefault();
-            const input = (event.currentTarget as HTMLFormElement).elements.namedItem("api") as HTMLInputElement;
+            const form = event.currentTarget as HTMLFormElement;
+            const input = form.elements.namedItem("api") as HTMLInputElement;
+            const tokenInput = form.elements.namedItem("adminToken") as HTMLInputElement;
             state.apiBase = input.value.replace(/\/$/, "");
+            state.adminToken = tokenInput.value.trim();
             localStorage.setItem("dm.apiBase", state.apiBase);
+            localStorage.setItem("dm.adminToken", state.adminToken);
             refresh();
           } }, [
             el("input", { name: "api", value: state.apiBase, "aria-label": "API Base" }),
+            el("input", {
+              name: "adminToken",
+              type: "password",
+              value: state.adminToken,
+              placeholder: "ADMIN_TOKEN",
+              "aria-label": "ADMIN_TOKEN",
+              autocomplete: "off",
+            }),
             el("label", { class: "toggle" }, [
               el("input", {
                 type: "checkbox",

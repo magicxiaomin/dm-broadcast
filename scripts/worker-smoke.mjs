@@ -1,12 +1,20 @@
 const apiBase = process.env.DM_API_BASE || "https://dm-broadcast-api.magicxiaomin.workers.dev";
 const deviceId = process.env.DM_DEVICE_ID || `api-acceptance-${Date.now()}`;
 const contactJid = process.env.DM_CONTACT_JID || "acceptance-device@s.whatsapp.net";
+const adminToken = process.env.DM_ADMIN_TOKEN || "";
+const deviceToken = process.env.DM_DEVICE_TOKEN || "";
 
-async function api(path, options = {}) {
+function authHeaders(role) {
+  const token = role === "device" ? deviceToken : adminToken;
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+async function api(path, options = {}, role = "admin") {
   const res = await fetch(`${apiBase}${path}`, {
     ...options,
     headers: {
       "content-type": "application/json",
+      ...authHeaders(role),
       ...(options.headers || {}),
     },
   });
@@ -26,9 +34,9 @@ const created = await api("/v1/campaigns", {
     points: 1,
     contacts: [{ name: "smoke", jid: contactJid }],
   }),
-});
+}, "admin");
 
-const pulled = await api(`/v1/tasks/pull?deviceId=${encodeURIComponent(deviceId)}&limit=1`);
+const pulled = await api(`/v1/tasks/pull?deviceId=${encodeURIComponent(deviceId)}&limit=1`, {}, "device");
 if (!pulled.tasks?.length) {
   throw new Error("expected one pulled task");
 }
@@ -44,7 +52,7 @@ await api("/v1/events", {
     eventType: "message_sent",
     payload: { source: "worker-smoke", server_msg_id: serverMsgId },
   }),
-});
+}, "device");
 
 const acked = await api("/v1/events", {
   method: "POST",
@@ -53,13 +61,13 @@ const acked = await api("/v1/events", {
     eventType: "message_ack",
     payload: { source: "worker-smoke", server_msg_id: serverMsgId, ack_level: 2 },
   }),
-});
+}, "device");
 
 if (acked.taskId !== task.id) {
   throw new Error(`ack did not correlate by server_msg_id: expected ${task.id}, got ${acked.taskId}`);
 }
 
-const dashboard = await api("/v1/dashboard");
+const dashboard = await api("/v1/dashboard", {}, "admin");
 const verified = dashboard.tasks.find((item) => item.id === task.id);
 if (!verified) {
   throw new Error(`task not found in dashboard: ${task.id}`);

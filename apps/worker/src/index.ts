@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   STATE: KVNamespace;
   ADMIN_TOKEN?: string;
+  DEVICE_TOKEN?: string;
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -35,8 +36,33 @@ function unauthorized() {
   return json({ ok: false, error: "unauthorized" }, { status: 401 });
 }
 
+function forbidden() {
+  return json({ ok: false, error: "forbidden" }, { status: 403 });
+}
+
 function notFound() {
   return json({ ok: false, error: "not_found" }, { status: 404 });
+}
+
+type AuthRole = "admin" | "device";
+
+function bearerToken(request: Request) {
+  const auth = request.headers.get("authorization") || "";
+  return auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
+}
+
+function authRole(request: Request, env: Env): AuthRole | null {
+  const token = bearerToken(request);
+  if (!token) return null;
+  if (env.ADMIN_TOKEN && token === env.ADMIN_TOKEN) return "admin";
+  if (env.DEVICE_TOKEN && token === env.DEVICE_TOKEN) return "device";
+  return null;
+}
+
+function requireAuth(request: Request, env: Env, allowed: AuthRole[]) {
+  const role = authRole(request, env);
+  if (!role) return unauthorized();
+  return allowed.includes(role) ? null : forbidden();
 }
 
 function nowMs() {
@@ -694,12 +720,6 @@ async function listLedger(env: Env) {
 }
 
 async function cleanupTestData(request: Request, env: Env) {
-  if (!env.ADMIN_TOKEN) return notFound();
-  const auth = request.headers.get("authorization") || "";
-  const headerToken = request.headers.get("x-admin-token") || "";
-  const bearer = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length) : "";
-  if (bearer !== env.ADMIN_TOKEN && headerToken !== env.ADMIN_TOKEN) return unauthorized();
-
   const dryRun = new URL(request.url).searchParams.get("dryRun") === "1";
   const taskWhere = `
     t.device_id LIKE 'api-acceptance-%'
@@ -848,19 +868,24 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") return health(env);
-    if (request.method === "GET" && url.pathname === "/v1/dashboard") return dashboard(env);
-    if (request.method === "GET" && url.pathname === "/v1/devices") return listDevices(env);
-    if (request.method === "POST" && url.pathname === "/v1/devices/register") return registerDevice(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/contacts") return listContacts(env);
-    if (request.method === "POST" && url.pathname === "/v1/contacts/sync") return syncContacts(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/campaigns") return listCampaigns(env);
-    if (request.method === "POST" && url.pathname === "/v1/campaigns") return createCampaign(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/tasks") return listTasks(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/tasks/pull") return pullTasks(request, env);
-    if (request.method === "POST" && url.pathname === "/v1/tasks/requeue") return requeueTask(request, env);
-    if (request.method === "POST" && url.pathname === "/v1/events") return recordEvent(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/ledger") return listLedger(env);
-    if (request.method === "POST" && url.pathname === "/v1/admin/cleanup-test-data") return cleanupTestData(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/dashboard") return requireAuth(request, env, ["admin"]) ?? dashboard(env);
+    if (request.method === "GET" && url.pathname === "/v1/devices") return requireAuth(request, env, ["admin"]) ?? listDevices(env);
+    if (request.method === "POST" && url.pathname === "/v1/devices/register") return requireAuth(request, env, ["device"]) ?? registerDevice(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/contacts") return requireAuth(request, env, ["admin"]) ?? listContacts(env);
+    if (request.method === "POST" && url.pathname === "/v1/contacts/sync") return requireAuth(request, env, ["device"]) ?? syncContacts(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/campaigns") return requireAuth(request, env, ["admin"]) ?? listCampaigns(env);
+    if (request.method === "POST" && url.pathname === "/v1/campaigns") return requireAuth(request, env, ["admin"]) ?? createCampaign(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/tasks") return requireAuth(request, env, ["admin"]) ?? listTasks(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/tasks/pull") return requireAuth(request, env, ["device"]) ?? pullTasks(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/tasks/requeue") return requireAuth(request, env, ["admin"]) ?? requeueTask(request, env);
+    if (request.method === "POST" && url.pathname === "/v1/events") return requireAuth(request, env, ["device"]) ?? recordEvent(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/ledger") return requireAuth(request, env, ["admin"]) ?? listLedger(env);
+    if (url.pathname.startsWith("/v1/admin/")) {
+      if (request.method === "POST" && url.pathname === "/v1/admin/cleanup-test-data") {
+        return requireAuth(request, env, ["admin"]) ?? cleanupTestData(request, env);
+      }
+      return requireAuth(request, env, ["admin"]) ?? notFound();
+    }
 
     return notFound();
   },
