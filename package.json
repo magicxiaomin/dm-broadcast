@@ -16,6 +16,7 @@
     "worker:safety-smoke": "node scripts/worker-safety-smoke.mjs",
     "worker:online-safety-smoke": "node scripts/worker-online-safety-smoke.mjs",
     "readiness:check": "node scripts/readiness-check.mjs",
+    "multi-device:preflight": "node scripts/multi-device-preflight.mjs",
     "account-isolation:check": "node scripts/account-isolation-check.mjs",
     "e2e:real": "node scripts/real-e2e.mjs",
     "acceptance:check": "node scripts/acceptance-check.mjs"

@@ -116,8 +116,8 @@ cd apps/android && ./gradlew :app:assembleDebug   # 或用 docs/acceptance-plan.
 | GET | /v1/dashboard | 后台汇总（设备/任务/事件/ledger，需 ADMIN_TOKEN） |
 | GET/POST | /v1/devices · /v1/devices/register | 设备列表（ADMIN_TOKEN） / 注册（DEVICE_TOKEN，含 safety 上报） |
 | GET/POST | /v1/contacts · /v1/contacts/sync | 联系人列表（ADMIN_TOKEN） / 同步（DEVICE_TOKEN） |
-| GET/POST | /v1/campaigns | 广播列表 / 创建（展开 tasks，需 ADMIN_TOKEN） |
-| GET | /v1/tasks · /v1/tasks/pull | 任务列表（ADMIN_TOKEN） / 原子认领（DEVICE_TOKEN，safety gate + stale 释放） |
+| GET/POST | /v1/campaigns | 广播列表 / 创建（展开 tasks，需 ADMIN_TOKEN；创建必须显式传 deviceId） |
+| GET | /v1/tasks · /v1/tasks/pull | 任务列表（ADMIN_TOKEN） / 原子认领（DEVICE_TOKEN；必须显式传 deviceId；严格 `device_id = ?`；safety gate + stale 释放） |
 | POST | /v1/tasks/requeue | failed/claimed → pending（需 ADMIN_TOKEN） |
 | POST | /v1/events | message_sent/failed/read/message_ack（需 DEVICE_TOKEN；ack 按 server_msg_id 归因加分） |
 | GET | /v1/ledger | 积分流水（需 ADMIN_TOKEN） |
@@ -222,6 +222,7 @@ FCM/APNs 推送 · LLM 改写文案 · 强身份证明 · 现金提现 · 订阅
 | B4 | wa-sdk AAR 13MB 提交进 git，非 Maven | 暂留 git，迁移排 ticket |
 | B5 | 验证脚本依赖（miniflare/esbuild）未声明 | 本 PR 已补进 devDependencies |
 | B6 | worker 手写路由（非 Hono）、npm（非 pnpm）、/v1 路由与表名 | 无害，已认作基线 |
+| B12 | 多设备多账号测试赋能 + 隔离坑修复 | 已落地 |
 
 ---
 
