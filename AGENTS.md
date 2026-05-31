@@ -162,6 +162,27 @@ Claude Code（规划 + 审计）        Codex（执行）
 
 ---
 
+## 测试责任
+
+测试不是单个角色的活，按「**谁能验证什么 + 在哪台机器跑 + 谁判定真假**」分区。
+Codex 不只验证「能编译」——它能驱动浏览器自动化 + 截图、用 ADB 截安卓真机屏并驱动流程，
+应尽量做**真行为验证**，能进 CI 的优先进 CI。
+
+| 区 | 内容 | 在哪跑 | 谁做 | 谁判定 |
+|---|---|---|---|---|
+| A · hermetic | `worker:check` / `web:build` / `worker:safety-smoke`(Miniflare) | GitHub CI | Codex 写 | CI（自动） |
+| A+ · Web 行为 E2E | headless 浏览器(Playwright)驱动 + 断言 | **可进 CI** | Codex 写 | CI + Claude 复验 |
+| B+ · 安卓真机验证 | ADB 截屏 + 驱动 pull→send 流程 | 挂着真机的 Mac | Codex 跑，**截图/日志作 PR 证据** | Claude 审证据 + 你抽查 |
+| C · 真实 IM 终验 | 真账号发真人、ack 回流、封号风险 | 真机 | Codex 发 + 你读/判定 | **你终审** |
+
+原则：
+- **能自动化的必须自动化，能进 CI 的优先进 CI**——CI 不会挑结果，是客观闸门。
+- 进不了 CI 的真机验证，Codex 须附**截图/录屏/日志证据**；Claude 抽查复跑，不凭单张截图采信（防"只贴通过的图"）。
+- 仍不可约的人类部分：**真实收件人那一读** + **封号风险判断** + **最终 merge 终审**。
+- 当前自动化测试集中在 worker 层；Web/Android 行为测试是缺口，见 backlog B8/B10。
+
+---
+
 ## 禁区 / 红线
 
 - 禁止无 ticket 直接实现或重构。
