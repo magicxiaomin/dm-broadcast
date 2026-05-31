@@ -21,13 +21,17 @@
 
 ## 工程债（已决定暂留，到点再迁）
 
-### B3 · Web 迁移 Next.js + shadcn/ui
-- 现状：Vite + 原生 TS（单 `main.ts`），带 demo 口令门。原型够用。
-- 触发条件：需要多路由 / 组件复用 / 团队协作时再迁。
+### B3 · Web 模块化（原型阶段几乎不必做；不需要换 Next.js）
+- 现状：纯客户端 Vite SPA（单 `main.ts` ~730 行），打 worker API，5 页 + E2E。
+- 评估：后台是单运营者内部工具，**不需要 SSR/路由/RSC，迁 Next.js 属过度设计**。真实潜在痛点只是 `main.ts` 随 B14/B1/B15 变臃肿。
+- 解法（增量、零迁移）：UI 长大时**在 Vite 内把 `main.ts` 拆模块 / 加轻量组件**，不换框架。
+- 触发条件：仅当 UI 规模/团队协作显著增长，再评估是否需要框架。
 
-### B4 · wa-sdk AAR 迁 GitHub Packages Maven
-- 现状：13.2MB `apps/android/app/libs/wa-sdk-release.aar` 提交进 git。
-- 触发条件：`magicxiaomin/wa` 发布到 GitHub Packages 后，改 `build.gradle` 用 Maven 依赖并从 git 移除 AAR。
+### B4 · wa-sdk AAR 交付方式（暂不做；要动先 Git LFS，不是 Maven）
+- 现状：13.2MB `apps/android/app/libs/wa-sdk-release.aar` 提交进 git，构建与真机都通。
+- 评估：唯一代价是 **git 历史膨胀**（每更新一次 AAR，旧 13MB 永久留在历史里）。SDK 不常更新则完全可接受。
+- 解法分级：更新频繁导致膨胀时，**优先 Git LFS**（把 .aar 移出常规历史，成本小）；GitHub Packages Maven 较重（需先在 `magicxiaomin/wa` 搭发布管线），仅在需要正式版本管理时再上。
+- 触发条件：AAR 更新频繁、git 仓库明显变大。
 
 ### B16 · KV 免费额度 / 遥测写入策略（已完成）
 - 已删除 KV 热路径写入：`/health`、`/v1/devices/register`、`/v1/events` 不再写 `last_seen`/`last_event` 死遥测。
