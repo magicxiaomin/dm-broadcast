@@ -18,5 +18,9 @@
     "account-isolation:check": "node scripts/account-isolation-check.mjs",
     "e2e:real": "node scripts/real-e2e.mjs",
     "acceptance:check": "node scripts/acceptance-check.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "miniflare": "^4.20250508.0"
   }
 }

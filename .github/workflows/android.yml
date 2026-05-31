@@ -1,0 +1,28 @@
+name: Android
+
+# 独立 workflow：只在 apps/android 变化时触发，不阻塞主 CI。
+# Android 真正的验收闸门是真机（见 AGENTS.md「真机/异步链路」）；
+# 此 job 仅做编译级别的检查，不设为 required。
+on:
+  push:
+    branches: [main]
+    paths: ['apps/android/**']
+  pull_request:
+    paths: ['apps/android/**']
+
+jobs:
+  assemble:
+    name: Android / assembleDebug
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Build debug APK
+        working-directory: apps/android
+        run: ./gradlew --no-daemon :app:assembleDebug

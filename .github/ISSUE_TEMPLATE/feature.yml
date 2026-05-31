@@ -1,0 +1,46 @@
+name: Ticket（功能 / Bug）
+description: 双 agent 协作 ticket — Codex 据此实现，Claude 据此审计
+title: "[Ticket] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **任何实现都必须先有 ticket。** 验收标准是 Claude 审计的唯一依据，至少一条要能被 CI/测试机械验证。
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标
+      description: 这个 ticket 要解决什么？一两句话。
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 改动范围
+      description: 涉及哪些 app / 文件 / 模块？明确不涉及哪些。
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收标准
+      description: |
+        可验证条件，至少一条可被 CI/测试机械验证。例：
+        - [ ] `npm run worker:safety-smoke` 覆盖 X 并通过
+        - [ ] GET /v1/... 返回 ...
+        - [ ] 真机：附 sendText → ack 日志/录屏
+      placeholder: "- [ ] "
+    validations:
+      required: true
+
+  - type: textarea
+    id: forbidden
+    attributes:
+      label: 禁区
+      description: 明确不做哪些事，防止越界（参考 AGENTS.md 红线与常量表）。
+    validations:
+      required: true
