@@ -8,6 +8,7 @@
   "scripts": {
     "web:dev": "npm --workspace @dm-broadcast/web run dev",
     "web:build": "npm --workspace @dm-broadcast/web run build",
+    "web:e2e": "npm --workspace @dm-broadcast/web run e2e",
     "worker:deploy": "npm --workspace @dm-broadcast/worker run deploy",
     "worker:deploy:api": "node scripts/deploy-worker-api.mjs",
     "worker:check": "npm --workspace @dm-broadcast/worker exec tsc -- --noEmit",
