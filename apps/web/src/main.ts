@@ -6,7 +6,7 @@ const AUTH_STORAGE_KEY = "dm.demoAuth";
 const AUTH_VALUE = "unlocked";
 
 type Row = Record<string, unknown>;
-type PageKey = "overview" | "dispatch" | "tasks" | "ledger" | "devices";
+type PageKey = "overview" | "dispatch" | "tasks" | "ledger" | "devices" | "users";
 
 type Dashboard = {
   ok: boolean;
@@ -29,6 +29,7 @@ const NAV: Array<{ key: PageKey; label: string; desc: string }> = [
   { key: "tasks", label: "任务记录", desc: "发送 / 失败 / 已读 / 重排队" },
   { key: "ledger", label: "积分 Ledger", desc: "read_reward 入账审计" },
   { key: "devices", label: "设备管理", desc: "账号、safety、心跳" },
+  { key: "users", label: "用户", desc: "归属、待确认、已入账" },
 ];
 
 const state = {
@@ -38,6 +39,7 @@ const state = {
   adminToken: localStorage.getItem("dm.adminToken") || "",
   dashboard: null as Dashboard | null,
   contacts: [] as Row[],
+  users: [] as Row[],
   contactFilter: "",
   taskFilter: "",
   deviceFilter: "",
@@ -89,17 +91,64 @@ async function refresh(message = "已刷新") {
   state.loading = true;
   render();
   try {
-    const [dashboard, contacts] = await Promise.all([
+    const [dashboard, contacts, users] = await Promise.all([
       api<Dashboard>("/v1/dashboard"),
       api<{ contacts: Row[] }>("/v1/contacts"),
+      api<{ users: Row[] }>("/v1/users"),
     ]);
     state.dashboard = dashboard;
     state.contacts = contacts.contacts || [];
+    state.users = users.users || [];
     state.message = message;
   } catch (error) {
     state.message = `刷新失败：${error instanceof Error ? error.message : String(error)}`;
   } finally {
     state.loading = false;
+    render();
+  }
+}
+
+async function createUser(event: Event) {
+  event.preventDefault();
+  const form = event.currentTarget as HTMLFormElement;
+  const data = new FormData(form);
+  const userId = String(data.get("id") || "").trim();
+  const displayName = String(data.get("displayName") || "").trim();
+  const notes = String(data.get("notes") || "").trim();
+  if (!displayName) {
+    state.message = "创建用户失败：显示名称必填";
+    render();
+    return;
+  }
+
+  state.loading = true;
+  render();
+  try {
+    await api("/v1/users", {
+      method: "POST",
+      body: JSON.stringify({ id: userId || undefined, displayName, notes: notes || undefined }),
+    });
+    form.reset();
+    await refresh("用户已创建");
+    state.page = "users";
+  } catch (error) {
+    state.message = `创建用户失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    state.loading = false;
+    render();
+  }
+}
+
+async function assignDevice(deviceId: string, userId: string) {
+  try {
+    await api("/v1/devices/assign", {
+      method: "POST",
+      body: JSON.stringify({ deviceId, userId: userId || null }),
+    });
+    await refresh(userId ? "设备归属已更新" : "设备已设为未归属");
+    state.page = "devices";
+  } catch (error) {
+    state.message = `分配失败：${error instanceof Error ? error.message : String(error)}`;
     render();
   }
 }
@@ -219,7 +268,7 @@ function visibleData() {
     ? (d?.ledger || [])
     : (d?.ledger || []).filter((entry) => !testTaskIds.has(String(entry.task_id || "")) && !hasTestMarker(entry.user_id) && !hasTestMarker(entry.metadata_json));
   const contacts = state.showTestData ? state.contacts : state.contacts.filter((contact) => !isTestContact(contact));
-  return { devices, tasks, campaigns, events, ledger, contacts };
+  return { devices, tasks, campaigns, events, ledger, contacts, users: state.users };
 }
 
 function textCell(value: unknown) {
@@ -297,6 +346,21 @@ function defaultDeviceId() {
 
 function sumPoints(rows: Row[]) {
   return rows.reduce((total, entry) => total + Number(entry.points || 0), 0);
+}
+
+function userById(userId: unknown) {
+  const id = String(userId || "");
+  return state.users.find((user) => String(user.id || "") === id) || null;
+}
+
+function userLabel(userId: unknown) {
+  if (!userId) return "未归属";
+  const user = userById(userId);
+  return user ? `${textCell(user.display_name)} (${textCell(user.id)})` : String(userId);
+}
+
+function pointsText(value: unknown) {
+  return `${Number(value || 0)} 分`;
 }
 
 function countStatus(tasks: Row[], status: string) {
@@ -659,30 +723,28 @@ function detail(label: string, value: unknown, mono = false) {
 }
 
 function renderLedger(data: ReturnType<typeof visibleData>) {
-  const totals = new Map<string, { points: number; entries: number }>();
-  for (const entry of data.ledger) {
-    const user = String(entry.user_id || "-");
-    const current = totals.get(user) || { points: 0, entries: 0 };
-    current.points += Number(entry.points || 0);
-    current.entries += 1;
-    totals.set(user, current);
-  }
+  const totalBooked = data.users.reduce((total, user) => total + Number(user.points || 0), 0);
+  const totalPending = data.users.reduce((total, user) => total + Number(user.pending_points || 0), 0);
 
   renderShell([
     pageHead("积分 Ledger", "只展示当前真实 read_reward 入账；兑换审批暂不属于 MVP"),
     el("section", { class: "metrics three" }, [
-      metric("总积分", sumPoints(data.ledger) || "-", "warning"),
+      metric("已入账", totalBooked || "-", "warning"),
+      metric("待确认", totalPending || "-"),
       metric("入账笔数", data.ledger.length || "-"),
-      metric("积分用户", totals.size || "-"),
     ]),
     el("section", { class: "grid two" }, [
-      card("用户汇总", [
-        table(["用户", "积分", "笔数"], Array.from(totals.entries()).map(([user, total]) => [
-          el("span", { class: "mono", text: user }),
-          el("span", { class: "tnum strong", text: total.points }),
-          el("span", { class: "tnum muted", text: total.entries }),
+      card("真实 User 汇总", [
+        table(["用户", "待确认", "已入账", "设备"], data.users.map((user) => [
+          el("span", {}, [
+            el("strong", { text: textCell(user.display_name) }),
+            el("span", { class: "mono muted block", text: textCell(user.id) }),
+          ]),
+          badge(pointsText(user.pending_points), "accent"),
+          badge(pointsText(user.points), "success"),
+          el("span", { class: "tnum muted", text: textCell(user.device_count) }),
         ])),
-      ]),
+      ], undefined, "按 B14a 的真实 User 聚合，不再按 device_id 归并。"),
       card("入账流水", [
         table(["任务", "类型", "积分", "时间"], data.ledger.map((entry) => [
           el("span", { class: "mono", text: shortId(entry.task_id, 24) }),
@@ -710,15 +772,61 @@ function renderDevices(data: ReturnType<typeof visibleData>) {
       oninput: (event: Event) => { state.deviceFilter = (event.currentTarget as HTMLInputElement).value; render(); },
     })),
     card("已注册设备", [
-      table(["设备", "WA 账号", "状态", "发送安全", "retry", "最后活跃"], devices.map((device) => [
+      table(["设备", "WA 账号", "归属用户", "状态", "发送安全", "retry", "最后活跃"], devices.map((device) => [
         el("span", { class: "mono", text: textCell(device.id) }),
         el("span", { class: "mono muted", text: textCell(device.wa_jid) }),
+        el("div", { class: "assignment-cell" }, [
+          badge(userLabel(device.user_id), device.user_id ? "success" : "warning"),
+          el("select", {
+            "aria-label": `归属用户 ${textCell(device.id)}`,
+            value: String(device.user_id || ""),
+            onchange: (event: Event) => assignDevice(String(device.id || ""), (event.currentTarget as HTMLSelectElement).value),
+          }, [
+            el("option", { value: "", text: "未归属" }),
+            ...data.users.map((user) => el("option", { value: String(user.id), text: `${user.display_name} (${user.id})` })),
+          ]),
+        ]),
         badge(deviceActivityLabel(device), statusTone(device.status)),
         badge(deviceSafety(device), statusTone(device.safety_status)),
         el("span", { class: "tnum muted", text: `${Number(device.safety_retry_after_seconds || 0)}s` }),
         el("span", { class: "tnum muted", text: fmtTime(device.last_seen_at) }),
       ])),
     ], undefined, "设备绑定和扫码登录在 Android App 内完成；当前 Web 不提供 token 吊销假能力。"),
+  ]);
+}
+
+function renderUsers(data: ReturnType<typeof visibleData>) {
+  const totalBooked = data.users.reduce((total, user) => total + Number(user.points || 0), 0);
+  const totalPending = data.users.reduce((total, user) => total + Number(user.pending_points || 0), 0);
+  renderShell([
+    pageHead("用户", "运营维护的创作者账号；无创作者登录，仅用于设备归属和积分聚合"),
+    el("section", { class: "metrics three" }, [
+      metric("用户", data.users.length || "-"),
+      metric("待确认", totalPending || "-"),
+      metric("已入账", totalBooked || "-", "warning"),
+    ]),
+    el("section", { class: "grid two" }, [
+      card("建用户", [
+        el("form", { class: "task-form", onsubmit: createUser }, [
+          el("label", {}, [el("span", { text: "用户 ID" }), el("input", { name: "id", placeholder: "可空，后端自动生成" })]),
+          el("label", {}, [el("span", { text: "显示名称" }), el("input", { name: "displayName", required: true, placeholder: "创作者昵称" })]),
+          el("label", {}, [el("span", { text: "备注" }), el("input", { name: "notes", placeholder: "运营备注，可空" })]),
+          el("button", { class: "btn primary wide", type: "submit", text: state.loading ? "创建中" : "创建用户" }),
+        ]),
+      ], undefined, "这里只是运营后台账号，不提供创作者注册或登录。"),
+      card("用户聚合", [
+        table(["用户", "待确认", "已入账", "设备", "备注"], data.users.map((user) => [
+          el("span", {}, [
+            el("strong", { text: textCell(user.display_name) }),
+            el("span", { class: "mono muted block", text: textCell(user.id) }),
+          ]),
+          badge(pointsText(user.pending_points), "accent"),
+          badge(pointsText(user.points), "success"),
+          el("span", { class: "tnum muted", text: textCell(user.device_count) }),
+          el("span", { class: "muted", text: textCell(user.notes) }),
+        ])),
+      ], undefined, "待确认来自 sent 未读任务；已入账来自 read_reward ledger 聚合。"),
+    ]),
   ]);
 }
 
@@ -729,6 +837,7 @@ function render() {
   if (state.page === "tasks") return renderTasks(data);
   if (state.page === "ledger") return renderLedger(data);
   if (state.page === "devices") return renderDevices(data);
+  if (state.page === "users") return renderUsers(data);
   return renderOverview(data);
 }
 
