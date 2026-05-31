@@ -256,6 +256,98 @@ async function listDevices(env: Env) {
   return json({ ok: true, devices: rows.results ?? [] });
 }
 
+async function createUser(request: Request, env: Env) {
+  const body = await readJson<{
+    id?: string;
+    displayName?: string;
+    display_name?: string;
+    notes?: string | null;
+  }>(request);
+  const userId = (body.id || id("user")).trim();
+  const displayName = (body.displayName || body.display_name || "").trim();
+  const notes = typeof body.notes === "string" && body.notes.trim() ? body.notes.trim() : null;
+  if (!userId) return badRequest("id is required");
+  if (!displayName) return badRequest("displayName is required");
+
+  const now = nowMs();
+  await env.DB.prepare(
+    `INSERT INTO users (id, display_name, notes, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).bind(userId, displayName, notes, now, now).run();
+
+  const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+  return json({ ok: true, user });
+}
+
+async function listUsers(env: Env) {
+  const rows = await env.DB.prepare(
+    `WITH device_counts AS (
+       SELECT user_id, COUNT(*) AS device_count
+       FROM devices
+       WHERE user_id IS NOT NULL
+       GROUP BY user_id
+     ),
+     ledger_by_user AS (
+       SELECT d.user_id, COALESCE(SUM(le.points), 0) AS points, COUNT(le.id) AS ledger_entries
+       FROM devices d
+       LEFT JOIN ledger_entries le ON le.user_id = d.id
+       WHERE d.user_id IS NOT NULL
+       GROUP BY d.user_id
+     ),
+     pending_by_user AS (
+       SELECT d.user_id, COUNT(t.id) AS pending_tasks, COALESCE(SUM(t.points), 0) AS pending_points
+       FROM devices d
+       JOIN tasks t ON t.device_id = d.id
+       WHERE d.user_id IS NOT NULL
+         AND t.status = 'sent'
+       GROUP BY d.user_id
+     )
+     SELECT
+       u.id,
+       u.display_name,
+       u.notes,
+       u.created_at,
+       u.updated_at,
+       COALESCE(dc.device_count, 0) AS device_count,
+       COALESCE(lbu.points, 0) AS points,
+       COALESCE(lbu.ledger_entries, 0) AS ledger_entries,
+       COALESCE(pbu.pending_tasks, 0) AS pending_tasks,
+       COALESCE(pbu.pending_points, 0) AS pending_points
+     FROM users u
+     LEFT JOIN device_counts dc ON dc.user_id = u.id
+     LEFT JOIN ledger_by_user lbu ON lbu.user_id = u.id
+     LEFT JOIN pending_by_user pbu ON pbu.user_id = u.id
+     ORDER BY u.created_at DESC`,
+  ).all();
+  return json({ ok: true, users: rows.results ?? [] });
+}
+
+async function assignDevice(request: Request, env: Env) {
+  const body = await readJson<{ deviceId?: string; userId?: string | null; user_id?: string | null }>(request);
+  const deviceId = (body.deviceId || "").trim();
+  const userIdValue = body.userId ?? body.user_id ?? null;
+  const userId = typeof userIdValue === "string" && userIdValue.trim() ? userIdValue.trim() : null;
+  if (!deviceId) return badRequest("deviceId is required");
+
+  const device = await env.DB.prepare("SELECT id FROM devices WHERE id = ?").bind(deviceId).first<{ id: string }>();
+  if (!device) return notFound();
+
+  if (userId) {
+    const user = await env.DB.prepare("SELECT id FROM users WHERE id = ?").bind(userId).first<{ id: string }>();
+    if (!user) return badRequest("userId does not exist");
+  }
+
+  const now = nowMs();
+  await env.DB.prepare(
+    `UPDATE devices
+     SET user_id = ?, updated_at = ?
+     WHERE id = ?`,
+  ).bind(userId, now, deviceId).run();
+
+  const assigned = await env.DB.prepare("SELECT * FROM devices WHERE id = ?").bind(deviceId).first();
+  return json({ ok: true, device: assigned });
+}
+
 async function syncContacts(request: Request, env: Env) {
   const body = await readJson<{
     contacts?: Array<{ jid?: string; name?: string }>;
@@ -863,7 +955,10 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") return health(env);
     if (request.method === "GET" && url.pathname === "/v1/dashboard") return requireAuth(request, env, ["admin"]) ?? dashboard(env);
     if (request.method === "GET" && url.pathname === "/v1/devices") return requireAuth(request, env, ["admin"]) ?? listDevices(env);
+    if (request.method === "POST" && url.pathname === "/v1/devices/assign") return requireAuth(request, env, ["admin"]) ?? assignDevice(request, env);
     if (request.method === "POST" && url.pathname === "/v1/devices/register") return requireAuth(request, env, ["device"]) ?? registerDevice(request, env);
+    if (request.method === "GET" && url.pathname === "/v1/users") return requireAuth(request, env, ["admin"]) ?? listUsers(env);
+    if (request.method === "POST" && url.pathname === "/v1/users") return requireAuth(request, env, ["admin"]) ?? createUser(request, env);
     if (request.method === "GET" && url.pathname === "/v1/contacts") return requireAuth(request, env, ["admin"]) ?? listContacts(env);
     if (request.method === "POST" && url.pathname === "/v1/contacts/sync") return requireAuth(request, env, ["device"]) ?? syncContacts(request, env);
     if (request.method === "GET" && url.pathname === "/v1/campaigns") return requireAuth(request, env, ["admin"]) ?? listCampaigns(env);

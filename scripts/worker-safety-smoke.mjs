@@ -1,9 +1,10 @@
-import { readFile, unlink } from "node:fs/promises";
+import { unlink } from "node:fs/promises";
 import { build } from "esbuild";
 import { Miniflare } from "miniflare";
+import { applyMigrationsToD1 } from "./lib/d1-migrations.mjs";
 
 const scriptPath = new URL("../apps/worker/src/index.ts", import.meta.url).pathname;
-const schemaPath = new URL("../apps/worker/migrations/0001_initial.sql", import.meta.url).pathname;
+const migrationsDir = new URL("../apps/worker/migrations/", import.meta.url).pathname;
 const bundledScriptPath = new URL("../outputs/worker-safety-smoke.mjs", import.meta.url).pathname;
 const ADMIN_TOKEN = "worker-safety-admin-token";
 const DEVICE_TOKEN = "worker-safety-device-token";
@@ -67,9 +68,13 @@ const mf = new Miniflare({
 
 try {
   const db = await mf.getD1Database("DB");
-  const schema = await readFile(schemaPath, "utf8");
-  for (const statement of schema.split(";").map((item) => item.trim()).filter(Boolean)) {
-    await db.prepare(statement).run();
+  const firstMigrations = await applyMigrationsToD1(db, migrationsDir);
+  if (!firstMigrations.applied.includes("0001_initial.sql") || !firstMigrations.applied.includes("0002_users.sql")) {
+    throw new Error(`expected all migrations to apply on fresh DB: ${JSON.stringify(firstMigrations)}`);
+  }
+  const secondMigrations = await applyMigrationsToD1(db, migrationsDir);
+  if (secondMigrations.applied.length !== 0) {
+    throw new Error(`migrations should be idempotent on second run: ${JSON.stringify(secondMigrations)}`);
   }
 
   await expectStatus(mf, "health public", "/health", { method: "GET" }, null, [200]);
@@ -83,6 +88,8 @@ try {
   }, null, [401]);
   await expectStatus(mf, "pull requires token", "/v1/tasks/pull?deviceId=missing&limit=1", { method: "GET" }, null, [401]);
   await expectStatus(mf, "wrong token rejected", "/v1/tasks/pull?deviceId=missing&limit=1", { method: "GET" }, "wrong", [401]);
+  await expectStatus(mf, "users requires admin token", "/v1/users", { method: "GET" }, null, [401]);
+  await expectStatus(mf, "device token cannot call users route", "/v1/users", { method: "GET" }, "device", [401, 403]);
   await expectStatus(mf, "device token cannot call admin route", "/v1/campaigns", {
     method: "POST",
     body: JSON.stringify({ title: "blocked", message: "blocked", contacts: [] }),
@@ -361,6 +368,143 @@ try {
   if (Number(ackLedger?.points || 0) !== 7) {
     throw new Error(`ack_level=2 did not create read_reward ledger: ${JSON.stringify(ackLedger)}`);
   }
+
+  const creator = await api(mf, "/v1/users", {
+    method: "POST",
+    body: JSON.stringify({
+      id: "smoke-user-primary",
+      displayName: "Smoke User Primary",
+      notes: "worker-safety-smoke",
+    }),
+  }, "admin");
+  if (creator.user?.id !== "smoke-user-primary") {
+    throw new Error(`user create did not return created user: ${JSON.stringify(creator)}`);
+  }
+
+  await api(mf, "/v1/devices/assign", {
+    method: "POST",
+    body: JSON.stringify({ deviceId: "ack-read-device", userId: "smoke-user-primary" }),
+  }, "admin");
+  await api(mf, "/v1/devices/register", {
+    method: "POST",
+    body: JSON.stringify({
+      id: "user-second-device",
+      deviceName: "user-second-device",
+      status: "online",
+      safety: { risk_stopped: false },
+    }),
+  }, "device");
+  await api(mf, "/v1/devices/assign", {
+    method: "POST",
+    body: JSON.stringify({ deviceId: "user-second-device", userId: "smoke-user-primary" }),
+  }, "admin");
+  await api(mf, "/v1/campaigns", {
+    method: "POST",
+    body: JSON.stringify({
+      title: "Second user device smoke",
+      message: "second device contributes points",
+      deviceId: "user-second-device",
+      points: 3,
+      contacts: [{ name: "user-second", jid: "user-second@s.whatsapp.net" }],
+    }),
+  }, "admin");
+  const secondPull = await api(mf, "/v1/tasks/pull?deviceId=user-second-device&limit=1", {}, "device");
+  const secondTask = secondPull.tasks[0];
+  if (!secondTask) {
+    throw new Error(`second user device task was not claimable: ${JSON.stringify(secondPull)}`);
+  }
+  await api(mf, "/v1/events", {
+    method: "POST",
+    body: JSON.stringify({
+      taskId: secondTask.id,
+      deviceId: "user-second-device",
+      clientMsgId: secondTask.clientMsgId,
+      eventType: "read",
+      payload: { source: "worker-safety-smoke" },
+    }),
+  }, "device");
+  await api(mf, "/v1/campaigns", {
+    method: "POST",
+    body: JSON.stringify({
+      title: "Pending user smoke",
+      message: "sent but unread should be pending confirmation",
+      deviceId: "user-second-device",
+      points: 4,
+      contacts: [{ name: "pending", jid: "pending-user@s.whatsapp.net" }],
+    }),
+  }, "admin");
+  const pendingUserPull = await api(mf, "/v1/tasks/pull?deviceId=user-second-device&limit=1", {}, "device");
+  const pendingUserTask = pendingUserPull.tasks[0];
+  if (!pendingUserTask) {
+    throw new Error(`pending user task was not claimable: ${JSON.stringify(pendingUserPull)}`);
+  }
+  await api(mf, "/v1/events", {
+    method: "POST",
+    body: JSON.stringify({
+      taskId: pendingUserTask.id,
+      deviceId: "user-second-device",
+      clientMsgId: pendingUserTask.clientMsgId,
+      eventType: "message_sent",
+      payload: { source: "worker-safety-smoke" },
+    }),
+  }, "device");
+
+  await api(mf, "/v1/devices/register", {
+    method: "POST",
+    body: JSON.stringify({
+      id: "unassigned-user-device",
+      deviceName: "unassigned-user-device",
+      status: "online",
+      safety: { risk_stopped: false },
+    }),
+  }, "device");
+  await api(mf, "/v1/campaigns", {
+    method: "POST",
+    body: JSON.stringify({
+      title: "Unassigned user smoke",
+      message: "unassigned points stay out of user aggregate",
+      deviceId: "unassigned-user-device",
+      points: 11,
+      contacts: [{ name: "unassigned", jid: "unassigned-user@s.whatsapp.net" }],
+    }),
+  }, "admin");
+  const unassignedPull = await api(mf, "/v1/tasks/pull?deviceId=unassigned-user-device&limit=1", {}, "device");
+  const unassignedTask = unassignedPull.tasks[0];
+  if (!unassignedTask) {
+    throw new Error(`unassigned task was not claimable: ${JSON.stringify(unassignedPull)}`);
+  }
+  await api(mf, "/v1/events", {
+    method: "POST",
+    body: JSON.stringify({
+      taskId: unassignedTask.id,
+      deviceId: "unassigned-user-device",
+      clientMsgId: unassignedTask.clientMsgId,
+      eventType: "read",
+      payload: { source: "worker-safety-smoke" },
+    }),
+  }, "device");
+
+  const users = await api(mf, "/v1/users", {}, "admin");
+  const smokeUser = users.users.find((user) => user.id === "smoke-user-primary");
+  if (!smokeUser) {
+    throw new Error(`created user missing from users list: ${JSON.stringify(users)}`);
+  }
+  if (Number(smokeUser.points || 0) !== 10 || Number(smokeUser.device_count || 0) !== 2) {
+    throw new Error(`user aggregate should include two assigned devices only: ${JSON.stringify(smokeUser)}`);
+  }
+  if (Number(smokeUser.pending_points || 0) !== 4 || Number(smokeUser.pending_tasks || 0) !== 1) {
+    throw new Error(`user pending aggregate should count assigned sent/unread tasks: ${JSON.stringify(smokeUser)}`);
+  }
+  if (users.users.some((user) => Number(user.points || 0) >= 11 && user.id !== "smoke-user-primary")) {
+    throw new Error(`unassigned device points leaked into a user aggregate: ${JSON.stringify(users.users)}`);
+  }
+  const ledgerIdentity = await db.prepare(
+    "SELECT user_id FROM ledger_entries WHERE task_id = ? AND entry_type = 'read_reward'",
+  ).bind(ackTask.id).first();
+  if (ledgerIdentity?.user_id !== "ack-read-device") {
+    throw new Error(`ledger user_id should remain device id, not assigned user id: ${JSON.stringify(ledgerIdentity)}`);
+  }
+
   const state = await mf.getKVNamespace("STATE");
   const stateKeys = await state.list();
   if (stateKeys.keys.length !== 0) {

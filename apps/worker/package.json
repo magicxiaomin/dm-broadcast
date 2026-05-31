@@ -5,8 +5,8 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "db:migrate:remote": "wrangler d1 execute dm_broadcast_mvp --remote --file=./migrations/0001_initial.sql",
-    "db:migrate:local": "wrangler d1 execute dm_broadcast_mvp --local --file=./migrations/0001_initial.sql"
+    "db:migrate:remote": "node ../../scripts/apply-d1-migrations.mjs --remote",
+    "db:migrate:local": "node ../../scripts/apply-d1-migrations.mjs --local"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260530.0",
