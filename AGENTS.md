@@ -1,0 +1,209 @@
+# AGENTS.md — dm-broadcast
+
+> 唯一真相源。CLAUDE.md 仅指向本文件。**本文件描述仓库的真实现状（baseline = 已验证的代码），不是早期设想。** 与早期 spec 的差异见文末「偏离与 backlog」。
+
+## 一句话简介
+
+运营方通过 Web 后台向多台创作者安卓设备下发文本广播任务；设备用第三方 IM（WhatsApp）账号逐联系人发送私信；已读事件（`message_ack` ack_level≥2）回流后给任务幂等加积分。**MVP 定位：调试原型，不上产品、不面向真实用户。** 已在真机 + 真账号 + 真实收件人上端到端验证过一次完整链路。
+
+---
+
+## 仓库结构（现状）
+
+```
+dm-broadcast/
+├── apps/
+│   ├── web/         ← 运营后台：Vite + TypeScript（原生 DOM，非框架），5 页
+│   ├── worker/      ← 任务云：Cloudflare Workers，手写 fetch 路由（非 Hono），D1 + KV
+│   └── android/     ← 创作者客户端：Kotlin + wa-sdk-release.aar（现在提交在 app/libs/）
+├── docs/            ← current-status.md（已验证证据）、acceptance-plan.md、backlog.md
+├── scripts/         ← 验证/部署脚本（smoke / safety-smoke / readiness / e2e / deploy）
+├── .github/         ← CI 闸门 + issue/PR 模板
+├── AGENTS.md  CLAUDE.md  README.md
+└── package.json     ← npm workspaces（apps/web、apps/worker；android 由 gradle 独立构建）
+```
+
+---
+
+## 技术栈（现状）
+
+| 层 | 技术 |
+|---|---|
+| 任务云 | Cloudflare Workers（手写路由）+ D1 + KV，TypeScript |
+| 运营后台 | Vite + TypeScript（原生 DOM SPA），带 demo 口令门 |
+| 安卓客户端 | Kotlin，compileSdk 35，依赖 `libs/wa-sdk-release.aar` + zxing |
+| 包管理 | npm workspaces（根 package.json + package-lock.json） |
+
+> 注：早期 spec 写的 pnpm / Hono / Next.js+shadcn / GitHub Packages Maven 均未采用，已按「认代码为基线」收编。详见文末。
+
+---
+
+## 环境与命令
+
+```bash
+npm install                       # 安装 web/worker 及脚本依赖
+
+# 开发
+npm run web:dev                   # Vite, http://localhost:3000
+npm --workspace @dm-broadcast/worker run dev   # wrangler dev
+
+# CI 闸门（见 .github/workflows/ci.yml）
+npm run worker:check              # worker tsc --noEmit
+npm run web:build                 # vite build
+npm run worker:safety-smoke       # Miniflare 本地 hermetic 冒烟（无需真 Cloudflare）
+
+# 数据库 migration
+npm --workspace @dm-broadcast/worker run db:migrate:local
+npm --workspace @dm-broadcast/worker run db:migrate:remote
+
+# 部署（手动，CI 不自动部署；需 CLOUDFLARE_API_TOKEN）
+npm run worker:deploy:api
+
+# Android（需本地 Android SDK + gradle，不在主 CI）
+cd apps/android && ./gradlew :app:assembleDebug   # 或用 docs/acceptance-plan.md 的完整命令
+```
+
+---
+
+## 部署现状（live）
+
+- Worker：`dm-broadcast-api` → `https://dm-broadcast-api.magicxiaomin.workers.dev`
+- D1：`dm_broadcast_mvp`（id 在 wrangler.toml）
+- KV：binding 名 **`STATE`**
+- 当前真机：`N0WR2G0009`；发送账号 `8618205924392:8@s.whatsapp.net` → 云端设备 `android-wa-8618205924392-8`
+- 真实收件人验收目标：`+85255804693`（`85255804693@s.whatsapp.net`）
+
+---
+
+## 架构（三层）
+
+```
+运营后台 Web (apps/web)
+   │ POST /v1/campaigns · GET /v1/dashboard · POST /v1/tasks/requeue · POST /v1/events(注入 read)
+   ▼
+任务云 Cloudflare (apps/worker)
+   手写路由 · D1(6表) · KV(STATE) · safety gate · stale-claim 自动释放
+   │ /v1/devices/register · /v1/contacts/sync · /v1/tasks/pull · /v1/events
+   ▼
+创作者安卓设备 (apps/android, 依赖 magicxiaomin/wa)
+   轮询 pull → safety 检查 → sendText → 回流 message_sent/failed/ack
+   │ message_ack(ack_level≥2, 按 server_msg_id 归因)
+   ▼
+联系人（收私信 → 读/不读）
+```
+
+**关键边界：** 私信内容不经过 Cloudflare。已读靠 `message_ack` 实时事件，设备离线期间错过的 ack 无法补查——已读统计系统性偏低，是架构边界不是 bug。
+
+---
+
+## D1 Schema（6 张表，现状）
+
+`devices` · `contacts` · `campaigns` · `tasks` · `im_events` · `ledger_entries`
+
+要点：
+- `tasks`：status = pending/claimed/sent/read/failed；`points` 来自所属 campaign（积分额度可配，非固定 +1）；`server_msg_id` 经 `im_events` 关联回流。
+- `ledger_entries`：append-only；**幂等命门** = `UNIQUE INDEX (task_id, entry_type) WHERE entry_type='read_reward'`。
+- safety 列在 `devices`：`safety_status` / `safety_retry_after_seconds` / `safety_json` / `safety_updated_at`。
+- 完整定义见 `apps/worker/migrations/0001_initial.sql`（权威）。**禁止漂移：改 schema 必须同步本表与 migration。**
+
+---
+
+## API 路由（/v1，现状）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | /health | 健康检查 |
+| GET | /v1/dashboard | 后台汇总（设备/任务/事件/ledger） |
+| GET/POST | /v1/devices · /v1/devices/register | 设备列表 / 注册（含 safety 上报） |
+| GET/POST | /v1/contacts · /v1/contacts/sync | 联系人列表 / 同步 |
+| GET/POST | /v1/campaigns | 广播列表 / 创建（展开 tasks） |
+| GET | /v1/tasks · /v1/tasks/pull | 任务列表 / 原子认领（safety gate + stale 释放） |
+| POST | /v1/tasks/requeue | failed/claimed → pending |
+| POST | /v1/events | message_sent/failed/read/message_ack（ack 按 server_msg_id 归因加分） |
+| GET | /v1/ledger | 积分流水 |
+| POST | /v1/admin/cleanup-test-data | 清测试数据（需 ADMIN_TOKEN） |
+
+鉴权现状：部分管理路由用 `Authorization: Bearer <ADMIN_TOKEN>`。**设备端暂无 per-device token**（spec 设想的 `/auth/bind` 弱证明未实现，见 backlog）。
+
+---
+
+## 已验证规则（现状常量）
+
+| 项 | 现状 | 说明 |
+|---|---|---|
+| 已读判定 | `ack_level >= 2` | wa SDK 定义 ack_level 2 为 read receipt |
+| stale claim 释放 | 10 分钟 | 超时 claimed 自动回 pending + `task_claim_expired` |
+| safety 暂停 | `safety_updated_at + retry_after_seconds` | 期间 pull 返回 `paused:true`、空任务 |
+| 已读积分 | 按 campaign `points` | 真机验收用过 +5；非 spec 设想的固定 +1 |
+| 设备 ID | `android-wa-<账号>` | 登录后按账号作用域；`android-prototype` 仅登录前回退 |
+
+> 改这些值需开 ticket 并经审计，不允许执行 agent 自行调整。
+
+---
+
+## 工作流与分工
+
+```
+Claude Code（规划 + 审计）        Codex（执行）
+────────────────────────        ──────────────
+- 写 ticket（验收标准+禁区）       - 按 ticket 在 feat/* 分支实现
+- 审计 PR：对照验收标准、查越界    - 跑通本地闸门后提 PR
+- 有运行权：跑测试/起 dev/打接口   - 不跨 ticket、不改上面常量
+- 产出审计意见，不写业务代码        - 真机相关附日志/录屏作为证据
+```
+
+**交接规则（吸取本次教训）：**
+1. **任何实现都必须先有 ticket**（含可验证的验收标准 + 禁区）。本次 Codex 无 ticket 自由发挥，导致架构偏离——以后不允许。
+2. Codex 开 `feat/<ticket>` 分支 → PR 到 `main`。
+3. CI「Sanity Checks / build」必须绿才请求审计。
+4. **验收标准至少一条可被 CI/测试机械验证**；纯人工判断的项（真机行为）须附证据。
+5. 真机/异步链路 CI 无法覆盖 → 验收靠 Claude 运行 + 你贴的真机证据，这是显式的手动闸门。
+6. 每个 ticket 独立可测，禁止跨步合并。
+
+---
+
+## 禁区 / 红线
+
+- 禁止无 ticket 直接实现或重构。
+- 禁止改「已验证规则」常量、改 D1 schema 而不同步 migration + 本文件。
+- 禁止在 worker 存储实际私信内容。
+- 禁止绕过 CI 合并（`--no-verify` / 直接 push main）。
+- 禁止自行添加 MVP 不实现清单中的功能。
+
+## MVP 不实现清单
+
+FCM/APNs 推送 · LLM 改写文案 · 强身份证明 · 现金提现 · 订阅机制 · 多设备共享 owner · 群组发送 · 媒体消息 · 逐收件人个性化文案 · 多语言 i18n
+
+---
+
+## UI 诚实标签约定（apps/web 必须遵守）
+
+| 字段 | 正确写法 | 禁止写法 |
+|---|---|---|
+| 设备状态 | 活跃（近 15 分钟） | 在线 |
+| 已读统计 | 已读（可统计）+「有延迟」 | 裸数字 |
+| 积分 | 待确认 / 已入账 | 单一合计 |
+| 金币说明 | 不可提现、不可转让 | 省略 |
+| 数据刷新 | 「每 5–10s 刷新 · 有延迟」 | 声称实时 |
+
+---
+
+## 偏离与 backlog（认代码为基线后的待办）
+
+早期 spec 与现状的差异，已决定**以代码为准**；以下作为后续 ticket（详见 `docs/backlog.md`）：
+
+| # | 缺口 / 偏离 | 决定 |
+|---|---|---|
+| B1 | redemptions 兑换审批（表+路由）完全缺失 | 真缺口，开 ticket 补 |
+| B2 | 设备端无 per-device token（仅 admin token） | 真缺口，评估鉴权层 A |
+| B3 | Web 是 Vite 原生 TS，非 Next.js+shadcn | 暂留 Vite，迁移排 ticket |
+| B4 | wa-sdk AAR 13MB 提交进 git，非 Maven | 暂留 git，迁移排 ticket |
+| B5 | 验证脚本依赖（miniflare/esbuild）未声明 | 本 PR 已补进 devDependencies |
+| B6 | worker 手写路由（非 Hono）、npm（非 pnpm）、/v1 路由与表名 | 无害，已认作基线 |
+
+---
+
+## 原则
+
+- 优先最简单可行；发现过度设计主动指出并给更简做法。
+- 真相源单一：schema 以 migration 为准，流程以本文件为准，已验证证据在 `docs/current-status.md`。
