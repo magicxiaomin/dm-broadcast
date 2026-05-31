@@ -122,6 +122,12 @@ async function createCampaign(event: Event) {
     const [nameOrJid, maybeJid] = line.split(",").map((part) => part.trim());
     return maybeJid ? { name: nameOrJid, jid: maybeJid } : { jid: nameOrJid };
   });
+  const deviceId = String(data.get("deviceId") || "").trim();
+  if (!deviceId) {
+    state.message = "创建失败：请选择设备";
+    render();
+    return;
+  }
 
   state.loading = true;
   render();
@@ -133,7 +139,7 @@ async function createCampaign(event: Event) {
         message: data.get("message"),
         contacts,
         points: Number(data.get("points") || 10),
-        deviceId: data.get("deviceId") || undefined,
+        deviceId,
       }),
     });
     state.message = `任务已创建：${result.campaign.taskCount} 条，等待设备轮询领取`;
@@ -566,7 +572,7 @@ function renderDispatch(data: ReturnType<typeof visibleData>) {
             el("label", {}, [el("span", { text: "积分" }), el("input", { name: "points", type: "number", value: "10", min: "0" })]),
             el("label", {}, [
               el("span", { text: "设备" }),
-              el("select", { name: "deviceId", value: defaultDeviceId() }, [
+              el("select", { name: "deviceId", value: defaultDeviceId(), required: true, placeholder: "android-wa-..." }, [
                 ...deviceOptions.map((device) => el("option", { value: String(device.id), text: `${device.id} · ${deviceSafety(device)}` })),
                 deviceOptions.length ? "" : el("option", { value: "android-prototype", text: "android-prototype" }),
               ]),

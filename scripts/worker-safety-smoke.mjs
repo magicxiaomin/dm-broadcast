@@ -87,6 +87,53 @@ try {
     method: "POST",
     body: JSON.stringify({ title: "blocked", message: "blocked", contacts: [] }),
   }, "device", [401, 403]);
+  await expectStatus(mf, "campaign requires deviceId", "/v1/campaigns", {
+    method: "POST",
+    body: JSON.stringify({
+      title: "Missing device smoke",
+      message: "must be rejected",
+      points: 1,
+      contacts: [{ name: "missing-device", jid: "missing-device@s.whatsapp.net" }],
+    }),
+  }, "admin", [400]);
+  await expectStatus(mf, "pull requires deviceId", "/v1/tasks/pull?limit=1", { method: "GET" }, "device", [400]);
+
+  await api(mf, "/v1/devices/register", {
+    method: "POST",
+    body: JSON.stringify({
+      id: "isolation-device-a",
+      deviceName: "isolation-device-a",
+      status: "online",
+      safety: { risk_stopped: false },
+    }),
+  }, "device");
+  await api(mf, "/v1/devices/register", {
+    method: "POST",
+    body: JSON.stringify({
+      id: "isolation-device-b",
+      deviceName: "isolation-device-b",
+      status: "online",
+      safety: { risk_stopped: false },
+    }),
+  }, "device");
+  await api(mf, "/v1/campaigns", {
+    method: "POST",
+    body: JSON.stringify({
+      title: "Isolation smoke",
+      message: "only device b can claim this",
+      deviceId: "isolation-device-b",
+      points: 1,
+      contacts: [{ name: "isolated", jid: "isolated@s.whatsapp.net" }],
+    }),
+  }, "admin");
+  const isolationPullA = await api(mf, "/v1/tasks/pull?deviceId=isolation-device-a&limit=1", {}, "device");
+  if (isolationPullA.tasks.length !== 0) {
+    throw new Error(`device A claimed a task assigned to device B: ${JSON.stringify(isolationPullA)}`);
+  }
+  const isolationPullB = await api(mf, "/v1/tasks/pull?deviceId=isolation-device-b&limit=1", {}, "device");
+  if (isolationPullB.tasks.length !== 1 || isolationPullB.tasks[0].deviceId !== "isolation-device-b") {
+    throw new Error(`device B did not claim its assigned task: ${JSON.stringify(isolationPullB)}`);
+  }
 
   await api(mf, "/v1/devices/register", {
     method: "POST",

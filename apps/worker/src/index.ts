@@ -302,17 +302,16 @@ async function createCampaign(request: Request, env: Env) {
   const message = (body.message || "").trim();
   const contacts = body.contacts || [];
   const points = Number.isFinite(body.points) ? Math.max(0, Math.floor(body.points || 0)) : 1;
-  const deviceId = (body.deviceId || "").trim() || null;
+  const deviceId = (body.deviceId || "").trim();
 
   if (!title) return badRequest("title is required");
   if (!message) return badRequest("message is required");
   if (!contacts.length) return badRequest("contacts is required");
+  if (!deviceId) return badRequest("deviceId is required");
 
   const campaignId = id("camp");
   const now = nowMs();
-  if (deviceId) {
-    await registerSyntheticHeartbeat(env, deviceId, now);
-  }
+  await registerSyntheticHeartbeat(env, deviceId, now);
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO campaigns (id, title, message_template, status, created_at, updated_at)
@@ -397,7 +396,8 @@ async function listTasks(request: Request, env: Env) {
 async function pullTasks(request: Request, env: Env) {
   await ensureDeviceSafetyColumns(env);
   const url = new URL(request.url);
-  const deviceId = url.searchParams.get("deviceId") || "android-prototype";
+  const deviceId = (url.searchParams.get("deviceId") || "").trim();
+  if (!deviceId) return badRequest("deviceId is required");
   const limit = Math.min(Number(url.searchParams.get("limit") || "5"), 10);
   const now = nowMs();
 
@@ -429,7 +429,7 @@ async function pullTasks(request: Request, env: Env) {
   const rows = await env.DB.prepare(
     `SELECT * FROM tasks
      WHERE status = 'pending'
-       AND (device_id IS NULL OR device_id = ?)
+       AND device_id = ?
      ORDER BY created_at ASC
      LIMIT ?`,
   ).bind(deviceId, limit).all<Record<string, unknown>>();
@@ -440,7 +440,7 @@ async function pullTasks(request: Request, env: Env) {
       tasks.map((task) =>
         env.DB.prepare(
           `UPDATE tasks
-           SET status = 'claimed', device_id = COALESCE(device_id, ?), updated_at = ?
+           SET status = 'claimed', device_id = ?, updated_at = ?
            WHERE id = ? AND status = 'pending'`,
         ).bind(deviceId, now, task.id),
       ),

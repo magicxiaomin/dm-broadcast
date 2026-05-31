@@ -52,6 +52,11 @@
 ### B9 · 测试节奏写进 AGENTS.md（本 PR 已做）
 - AGENTS.md「测试责任」小节已明确 A / A+ / B+ / C 各区谁跑、何时跑、证据形式。
 
+### B12 · 多设备多账号测试赋能 + 隔离坑修复（已完成）
+- 已修 Worker 隔离坑：campaign 创建必须显式传 `deviceId`；pull 必须显式传 `deviceId` 且只认领 `device_id = ?` 的任务。
+- 已新增 `multi-device:preflight` 手动检查入口和 `docs/multi-device-testing.md` runbook。
+- 边界：未做 B2-full；本项不引入 per-device token，隔离依赖显式 deviceId 指派。
+
 ## 一致性
 
 ### B6 · spec 与代码命名差异（已认基线，仅记录）
