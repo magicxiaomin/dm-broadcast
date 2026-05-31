@@ -52,6 +52,16 @@
 ### B9 · 测试节奏写进 AGENTS.md（本 PR 已做）
 - AGENTS.md「测试责任」小节已明确 A / A+ / B+ / C 各区谁跑、何时跑、证据形式。
 
+### B12 · 多设备多账号测试赋能 + 修隔离坑（Issue #9）
+- runbook + preflight 脚本 + 修两个隔离坑（createCampaign 必须带 deviceId；pull 严格 device_id、不再默认 android-prototype、不抢 null 任务）。隔离断言进 worker:safety-smoke。
+
+### B13 · 前端打磨（apps/web，低优先）
+来自对 `apps/web/src/main.ts` 的审计，均非功能 bug：
+- **#1 文案不一致**：`sent` 状态在总览 metric 显示「待确认」，但 `statusChipForTask` 仍显示「已发送」。诚实标签改动未贯穿，需统一术语。
+- **#3 缺 ADMIN_TOKEN 的 UX 断点**：demo 密码解锁后若未填 ADMIN_TOKEN，`/v1/dashboard` 返回 401，`refresh()` 仅提示「刷新失败：unauthorized」，不引导用户去顶栏填 token。加明确引导 / 区分两道门。
+- **#4 死代码（顺手清）**：`Dashboard.summary` 类型字段声明但未用（前端从过滤后数据重算 metric）。可在别的 Web PR 顺手清。
+- 注：审计中的 **#2（android-prototype 兜底）已纳入 B12 范围**——B12 实现时必须去掉 `defaultDeviceId()` / 下拉框的 android-prototype 兜底，否则与 worker 强制 deviceId 冲突。
+
 ## 一致性
 
 ### B6 · spec 与代码命名差异（已认基线，仅记录）
