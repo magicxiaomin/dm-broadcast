@@ -57,6 +57,13 @@
 - 已新增 `multi-device:preflight` 手动检查入口和 `docs/multi-device-testing.md` runbook。
 - 边界：未做 B2-full；本项不引入 per-device token，隔离依赖显式 deviceId 指派。
 
+### B13 · 前端打磨（apps/web，低优先）
+来自对 `apps/web/src/main.ts` 的审计，均非功能 bug：
+- **#1 文案不一致**：`sent` 状态在总览 metric 显示「待确认」，但 `statusChipForTask` 仍显示「已发送」。诚实标签改动未贯穿，需统一术语。
+- **#2 残留 android-prototype 兜底**（B12 审计 PR #11 发现）：`defaultDeviceId()` 仍以 `"android-prototype"` 兜底，下拉框在零真实设备时仍提供该选项，可建出指向前登录桶的 campaign。改为：移除兜底；零真实设备时禁止下发并提示「无可用设备」。
+- **#3 缺 ADMIN_TOKEN 的 UX 断点**：demo 密码解锁后若未填 ADMIN_TOKEN，`/v1/dashboard` 返回 401，`refresh()` 仅提示「刷新失败：unauthorized」，不引导用户去顶栏填 token。加明确引导 / 区分两道门。
+- **#4 死代码（顺手清）**：`Dashboard.summary` 类型字段声明但未用（前端从过滤后数据重算 metric）。
+
 ## 一致性
 
 ### B6 · spec 与代码命名差异（已认基线，仅记录）
