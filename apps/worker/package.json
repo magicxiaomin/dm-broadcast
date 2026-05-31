@@ -1,0 +1,16 @@
+{
+  "name": "@dm-broadcast/worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "db:migrate:remote": "wrangler d1 execute dm_broadcast_mvp --remote --file=./migrations/0001_initial.sql",
+    "db:migrate:local": "wrangler d1 execute dm_broadcast_mvp --local --file=./migrations/0001_initial.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260530.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.18.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "dm-broadcast",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/worker"
+  ],
+  "scripts": {
+    "web:dev": "npm --workspace @dm-broadcast/web run dev",
+    "web:build": "npm --workspace @dm-broadcast/web run build",
+    "worker:deploy": "npm --workspace @dm-broadcast/worker run deploy",
+    "worker:deploy:api": "node scripts/deploy-worker-api.mjs",
+    "worker:check": "npm --workspace @dm-broadcast/worker exec tsc -- --noEmit",
+    "worker:smoke": "scripts/smoke-worker.sh",
+    "worker:safety-smoke": "node scripts/worker-safety-smoke.mjs",
+    "worker:online-safety-smoke": "node scripts/worker-online-safety-smoke.mjs",
+    "readiness:check": "node scripts/readiness-check.mjs",
+    "account-isolation:check": "node scripts/account-isolation-check.mjs",
+    "e2e:real": "node scripts/real-e2e.mjs",
+    "acceptance:check": "node scripts/acceptance-check.mjs"
+  }
+}

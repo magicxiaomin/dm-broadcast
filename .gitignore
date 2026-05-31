@@ -1,0 +1,15 @@
+node_modules/
+.env.local
+.env.*.local
+.wrangler/
+outputs/
+waweb.zip
+phone-current.png
+local.properties
+dist/
+build/
+**/.gradle/
+**/.kotlin/
+**/dist/
+**/build/
+.DS_Store

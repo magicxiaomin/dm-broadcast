@@ -1,0 +1,13 @@
+name = "dm-broadcast-api"
+main = "src/index.ts"
+compatibility_date = "2026-05-30"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dm_broadcast_mvp"
+database_id = "f07a0f16-c6c9-4162-87f7-1e4a68eb9a6f"
+
+[[kv_namespaces]]
+binding = "STATE"
+id = "dfa94c2504bb4beba319ef8e0062a7d5"

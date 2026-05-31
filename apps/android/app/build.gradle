@@ -1,0 +1,35 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+}
+
+android {
+    namespace "com.magicxiaomin.dmbroadcast.device"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.magicxiaomin.dmbroadcast.device"
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0"
+    }
+
+    buildFeatures {
+        aidl true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+}
+
+dependencies {
+    implementation files("libs/wa-sdk-release.aar")
+    implementation "com.google.zxing:core:3.5.3"
+}
