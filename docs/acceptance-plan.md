@@ -77,6 +77,7 @@ npm run worker:smoke
 npm run readiness:check
 npm run account-isolation:check
 npm run acceptance:check
+DM_REAL_CONTACT_JID="85255804693@s.whatsapp.net" npm run android:verify
 DM_REAL_CONTACT_JID="..." npm run e2e:real
 cd apps/android && JAVA_HOME="$HOME/.local/share/codex-wa-tools/jdk17/Contents/Home" ANDROID_HOME="$HOME/Library/Android/sdk" ANDROID_SDK_ROOT="$HOME/Library/Android/sdk" "$HOME/.local/share/codex-wa-tools/gradle-8.10.2/bin/gradle" --no-daemon :app:assembleDebug
 ```
@@ -92,6 +93,8 @@ cd apps/android && JAVA_HOME="$HOME/.local/share/codex-wa-tools/jdk17/Contents/H
 换号扫码后，先在 Android 原型端点击 `读取身份` 或等待 `session_restored`，确认日志出现 `DEVICE scoped id=android-wa-...`。之后 Web 创建任务或运行 `npm run e2e:real` 时，不传 `DM_DEVICE_ID` 会优先选用这个账号作用域设备；需要指定时使用对应的 `android-wa-*` ID。
 
 `npm run e2e:real` 会创建真实 Android 发送任务，必须显式设置 `DM_REAL_CONTACT_JID`，否则脚本会拒绝运行。若只想验证发送后入账逻辑，可加 `DM_INJECT_READ=1` 在任务达到 `sent` 后注入 read 事件。
+
+`npm run android:verify` 是 B+ 区真机证据采集脚本，不进 GitHub CI。运行前需连接物理 Android 设备、安装当前 debug 包、完成扫码登录、Worker 侧存在 ready 的 `android-wa-*` 设备，并显式设置 `DM_REAL_CONTACT_JID`。脚本会启动 app、触发/观测 `pull → sendText`，创建只指派给该真实 deviceId 的任务，并把截图、logcat 全量、关键 logcat 行和 `summary.json` 写入 `outputs/android-device-verify/<timestamp>/`。无 ADB 设备、无显式收件人、未安装 app、未找到 ready 设备或 safety 阻断时，脚本会在创建真实任务前安全退出。
 
 真机继续验收前先确认 Android UI 的 `安全状态` 是 `可发送`，并运行 `npm run readiness:check -- --strict`；若显示 risk stop、冷却中或 bridge state 不是 `connected`，不运行真实 E2E。
 
