@@ -64,6 +64,24 @@
 - **#3 缺 ADMIN_TOKEN 的 UX 断点**：demo 密码解锁后若未填 ADMIN_TOKEN，`/v1/dashboard` 返回 401，`refresh()` 仅提示「刷新失败：unauthorized」，不引导用户去顶栏填 token。加明确引导 / 区分两道门。
 - **#4 死代码（顺手清）**：`Dashboard.summary` 类型字段声明但未用（前端从过滤后数据重算 metric）。
 
+## 身份与反作弊（未来架构，较重）
+
+### B14 · 用户账号系统（重身份重构）
+- 现状：无 User 实体；IM 账号（self_jid）≡ 设备（`android-wa-<账号>`）≡ `ledger.user_id`，三者重叠（代码：`userId = body.deviceId || task.device_id`）。一人多机 = 多个独立身份、积分分散在多个桶。
+- 目标：引入真实 User（注册/登录/资料）；`User 1:N IM账号/设备`；积分桶上移到 User 层聚合。`android-wa-*` 降级为 User 名下的设备绑定。
+- 迁移接触点：
+  - `ledger.user_id` 语义从「device_id」改为「真实 user id」+ 新增 `User↔设备` 映射表 + 存量 ledger 回填；
+  - 积分查询/汇总按 User 聚合；
+  - `/auth/bind` 时把设备绑定到 User（与 B2-full 的 per-device token + owner scope 合流）。
+- 依赖/关联：**B1 兑换审批**（余额与兑换归 User）、**B2-full**（per-device token + owner scope）。
+
+### B15 · 防刷积分 / 反作弊（依赖 B14）
+- 风险：一个 User 名下多台设备装**相同联系人**，对同一 recipient 重复发送，刷取重复 `read_reward`；真实触达没增加，积分虚高。
+- 核心规则：**同一 User 下，相同联系人（recipient JID）跨多设备只算一个有效触达**——按 `(user, recipient)` 去重，同一收件人对同一 user 的同一广播只计一次积分。
+- 关联 spec 中已设想但**代码未实现**的防刷常量：`NEW_OWNER_COOLDOWN_DAYS`（新账号冷静期不计分）、`RECIPIENT_DAILY_CAP`（同一 recipient 每日封顶）、弱证明下以兑换人工审批兜底。
+- 验收（草案）：smoke 覆盖「同一 user 两设备发同一 recipient，只入账一次」；跨设备 recipient 去重逻辑可验证。
+- 依赖：**B14**（需要 User↔设备 归属关系才能跨设备去重）。
+
 ## 一致性
 
 ### B6 · spec 与代码命名差异（已认基线，仅记录）
