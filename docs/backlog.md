@@ -73,13 +73,20 @@
 
 ## 身份与反作弊（未来架构，较重）
 
-### B14 · 用户账号系统（重身份重构）
-- 现状：无 User 实体；IM 账号（self_jid）≡ 设备（`android-wa-<账号>`）≡ `ledger.user_id`，三者重叠（代码：`userId = body.deviceId || task.device_id`）。一人多机 = 多个独立身份、积分分散在多个桶。
-- 目标：引入真实 User（注册/登录/资料）；`User 1:N IM账号/设备`；积分桶上移到 User 层聚合。`android-wa-*` 降级为 User 名下的设备绑定。
-- 迁移接触点：
-  - `ledger.user_id` 语义从「device_id」改为「真实 user id」+ 新增 `User↔设备` 映射表 + 存量 ledger 回填；
-  - 积分查询/汇总按 User 聚合；
-  - `/auth/bind` 时把设备绑定到 User（与 B2-full 的 per-device token + owner scope 合流）。
+### B14a · 用户账号系统后端（已完成）
+- 已新增 `users` 表与 `devices.user_id` nullable 归属字段；一台设备最多归属一个运营维护的 user。
+- 已新增 ADMIN_TOKEN 路由：`GET /v1/users`、`POST /v1/users`、`POST /v1/devices/assign`。
+- 积分仍不重写、不回填：`ledger_entries.user_id` 继续存 device id，user 余额在查询时通过 `users ← devices ← ledger_entries` 聚合。
+- `GET /v1/users` 同时返回已入账 `points` 与 per-user 待确认 `pending_points` / `pending_tasks`，供 B14b 前端诚实标签使用。
+- migration 采用 `_dm_migrations` 跟踪表，`db:migrate` 与 Miniflare smoke 共用同一套“按文件名排序、仅应用未跑过 migration”的逻辑。
+
+### B14b · 用户账号系统 Web 管理（待做）
+- 目标：在现有 Vite Web 后台展示 users、设备归属、已入账/待确认聚合，并提供运营手动绑定设备的入口。
+- 边界：仍无用户登录/auth；不做 B2-full owner scope；不重写 ledger。
+
+### B14-full · 用户身份与 owner scope（未来重构）
+- 现状：B14a 只有运营维护的 User 实体；IM 账号（self_jid）与设备仍是真实执行身份，`ledger.user_id` 仍是 device id。
+- 目标：若后续产品化，再引入真实 User 注册/登录/资料、每设备 token、owner scope、`/auth/bind` 弱证明，并评估存量 ledger 迁移。
 - 依赖/关联：**B1 兑换审批**（余额与兑换归 User）、**B2-full**（per-device token + owner scope）。
 
 ### B15 · 防刷积分 / 反作弊（依赖 B14）

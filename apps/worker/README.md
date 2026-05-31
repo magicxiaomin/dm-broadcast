@@ -19,3 +19,5 @@ npm run dev
 npm run db:migrate:remote
 npm run deploy
 ```
+
+`db:migrate:local` and `db:migrate:remote` apply every SQL file in `migrations/` by name order and record completed files in `_dm_migrations`, so rerunning the command skips migrations already applied to that D1 database.
