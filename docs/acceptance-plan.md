@@ -16,7 +16,7 @@
 1. Cloudflare 基础设施
    - Worker `dm-broadcast-api` 可访问 `/health`。
    - D1 `dm_broadcast_mvp` 包含 devices、contacts、campaigns、tasks、im_events、ledger_entries。
-   - KV `dm-broadcast-mvp-kv` 可被 Worker 写入健康检查/设备事件。
+   - KV `dm-broadcast-mvp-kv` binding 存在；MVP 当前不在 `/health`、设备注册或事件回流热路径写 KV。
 
 2. Worker API
    - `POST /v1/devices/register` 可注册安卓设备。

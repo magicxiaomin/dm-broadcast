@@ -73,14 +73,6 @@ function id(prefix: string) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
-async function putStateBestEffort(env: Env, key: string, value: string, options?: KVNamespacePutOptions) {
-  try {
-    await env.STATE.put(key, value, options);
-  } catch (error) {
-    console.warn("state_put_skipped", key, error instanceof Error ? error.message : String(error));
-  }
-}
-
 function parsePayload(value: unknown): string {
   if (value == null) return "{}";
   if (typeof value === "string") return value;
@@ -157,8 +149,6 @@ async function ensureDeviceSafetyColumns(env: Env) {
 }
 
 async function health(env: Env) {
-  const now = nowMs();
-  await putStateBestEffort(env, "health:last_seen", String(now), { expirationTtl: 86400 });
   const [devices, pending, sent, read, ledger] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) AS count FROM devices").first<{ count: number }>(),
     env.DB.prepare("SELECT COUNT(*) AS count FROM tasks WHERE status IN ('pending','claimed')").first<{ count: number }>(),
@@ -257,7 +247,6 @@ async function registerDevice(request: Request, env: Env) {
     )
     .run();
 
-  await putStateBestEffort(env, `device:${deviceId}:last_seen`, String(now), { expirationTtl: 86400 });
   return json({ ok: true, id: deviceId });
 }
 
@@ -580,10 +569,6 @@ async function recordEvent(request: Request, env: Env) {
     `INSERT INTO im_events (id, task_id, event_type, payload_json, created_at)
      VALUES (?, ?, ?, ?, ?)`,
   ).bind(id("evt"), taskId || null, eventType, parsePayload(body.payload ?? body), now).run();
-
-  if (body.deviceId) {
-    await putStateBestEffort(env, `device:${body.deviceId}:last_event`, JSON.stringify({ eventType, now }), { expirationTtl: 86400 });
-  }
 
   if (taskId) {
     await applyTaskEvent(env, taskId, eventType, now, { ...body, clientMsgId, serverMsgId });

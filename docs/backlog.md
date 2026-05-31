@@ -29,10 +29,10 @@
 - 现状：13.2MB `apps/android/app/libs/wa-sdk-release.aar` 提交进 git。
 - 触发条件：`magicxiaomin/wa` 发布到 GitHub Packages 后，改 `build.gradle` 用 Maven 依赖并从 git 移除 AAR。
 
-### B16 · KV 免费额度 / 遥测写入策略（PR #13 真机验证发现）
-- 现状：`/health`、`/v1/devices/register`、`/v1/events` 每次都向 KV 写 `last_seen`/`last_event` 遥测；免费版 KV 写额度耗尽时曾返回 1101，把核心端点打挂。PR #13 已把这些写入改为 best-effort（吞错 + warn），核心 D1 流程不再被 KV 额度拖垮。
-- 风险（多设备扩容更快触顶）：额度耗尽时 KV 遥测静默降级。影响有限——UI 设备状态读 D1（`devices.last_seen_at`），不依赖 KV。
-- 后续：评估降低 KV 写频（如按间隔/采样写）或正式接受遥测降级；必要时升 KV 套餐。
+### B16 · KV 免费额度 / 遥测写入策略（已完成）
+- 已删除 KV 热路径写入：`/health`、`/v1/devices/register`、`/v1/events` 不再写 `last_seen`/`last_event` 死遥测。
+- 代码复核：Worker 无 `STATE.get` / `STATE.list` / `STATE.put`；KV binding `STATE` 继续保留，留给未来低频配置或演示开关。
+- Android 已将 register/safety 稳态上报降频到 60s；`risk_stopped` / 冷却 / 恢复等状态变化仍即时上报。业务事件 `message_sent` / `message_ack` 仍实时回流。
 
 ### B5 · 验证脚本依赖声明（本 PR 已修）
 - 已把 `miniflare` / `esbuild` 加入根 devDependencies，使 `worker:safety-smoke` 在干净环境（CI）可跑。
