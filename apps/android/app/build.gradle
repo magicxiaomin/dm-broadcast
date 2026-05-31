@@ -1,7 +1,20 @@
+import java.util.Properties
+
 plugins {
     id "com.android.application"
     id "org.jetbrains.kotlin.android"
 }
+
+def localProps = new Properties()
+def localPropsFile = rootProject.file("local.properties")
+if (localPropsFile.exists()) {
+    localPropsFile.withInputStream { localProps.load(it) }
+}
+def deviceToken = localProps.getProperty("DM_DEVICE_TOKEN")
+        ?: localProps.getProperty("deviceToken")
+        ?: System.getenv("DM_DEVICE_TOKEN")
+        ?: ""
+def escapedDeviceToken = deviceToken.replace("\\", "\\\\").replace("\"", "\\\"")
 
 android {
     namespace "com.magicxiaomin.dmbroadcast.device"
@@ -13,10 +26,12 @@ android {
         targetSdk 35
         versionCode 1
         versionName "0.1.0"
+        buildConfigField "String", "DM_DEVICE_TOKEN", "\"${escapedDeviceToken}\""
     }
 
     buildFeatures {
         aidl true
+        buildConfig true
     }
 
     compileOptions {

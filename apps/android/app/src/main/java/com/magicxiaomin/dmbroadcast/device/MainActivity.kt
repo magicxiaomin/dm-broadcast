@@ -30,6 +30,7 @@ import java.net.URL
 class MainActivity : Activity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val defaultApiBase = "https://dm-broadcast-api.magicxiaomin.workers.dev"
+    private val deviceToken = BuildConfig.DM_DEVICE_TOKEN
     private val pendingTaskByClientMsgId = mutableMapOf<String, CloudTask>()
     private val pollRunnable = object : Runnable {
         override fun run() {
@@ -538,6 +539,9 @@ class MainActivity : Activity() {
             readTimeout = 20000
             setRequestProperty("content-type", "application/json")
             setRequestProperty("accept", "application/json")
+            if (deviceToken.isNotBlank()) {
+                setRequestProperty("authorization", "Bearer $deviceToken")
+            }
             if (body != null) doOutput = true
         }
         if (body != null) {

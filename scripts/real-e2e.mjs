@@ -1,4 +1,6 @@
 const apiBase = process.env.DM_API_BASE || "https://dm-broadcast-api.magicxiaomin.workers.dev";
+const adminToken = process.env.DM_ADMIN_TOKEN || "";
+const deviceToken = process.env.DM_DEVICE_TOKEN || "";
 const deviceId = process.env.DM_DEVICE_ID || await findDefaultDeviceId();
 const contactJid = process.env.DM_REAL_CONTACT_JID;
 const contactName = process.env.DM_REAL_CONTACT_NAME || "小号 +85255804693";
@@ -18,11 +20,17 @@ if (!contactJid.includes("@")) {
   process.exit(2);
 }
 
-async function api(path, options = {}) {
+function authHeaders(role) {
+  const token = role === "device" ? deviceToken : adminToken;
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+async function api(path, options = {}, role = "admin") {
   const res = await fetch(`${apiBase}${path}`, {
     ...options,
     headers: {
       "content-type": "application/json",
+      ...authHeaders(role),
       ...(options.headers || {}),
     },
   });
@@ -120,13 +128,13 @@ const created = await api("/v1/campaigns", {
     points,
     contacts: [{ name: contactName, jid: contactJid }],
   }),
-});
+}, "admin");
 
 let taskId = null;
 const createdCampaignId = created.campaignId || created.campaign?.id;
 const started = Date.now();
 while (Date.now() - started < 15000) {
-  const dashboard = await api("/v1/dashboard");
+  const dashboard = await api("/v1/dashboard", {}, "admin");
   const task = (dashboard.tasks || []).find((item) => item.campaign_id === createdCampaignId && item.contact_jid === contactJid);
   if (task) {
     taskId = task.id;
@@ -170,7 +178,7 @@ while (Date.now() < end) {
         eventType: "read",
         payload: { source: "real-e2e-injected-read" },
       }),
-    });
+    }, "device");
   }
 
   if (task.status === "read") {

@@ -6,7 +6,7 @@
 - 任务队列先由 D1 `tasks` 表承载，安卓设备通过轮询拉取。
 - Android 未登录前设备 ID 使用 `android-prototype`；扫码登录并读到 `self_jid` 后，设备 ID 自动切换为 `android-wa-<账号标识>`，避免多个测试号共享同一队列和 safety 状态。
 - 积分入账规则：任务收到 `read` / `message_read` / `receipt_read` / `read_receipt`，或收到可关联到任务且 `ack_level >= 2` 的 `message_ack` 后，写入一条幂等 `read_reward` ledger。
-- SDK 当前已验证会产生 `message_sent` / `message_failed` / `message_ack`；`wa` SDK 测试定义 `ack_level: 2` 为 read receipt。Worker 会按 `server_msg_id` 将 ack-only 事件反查到原任务。验收时也支持 Web/脚本注入 `read` 事件验证入账逻辑。
+- SDK 当前已验证会产生 `message_sent` / `message_failed` / `message_ack`；`wa` SDK 测试定义 `ack_level: 2` 为 read receipt。Worker 会按 `server_msg_id` 将 ack-only 事件反查到原任务。验收时支持经脚本/真机注入 `read` 事件验证入账逻辑，Web 注入已移除。
 - Android 轮询前必须先读取 SDK safety status。若存在 `risk_stopped`、发送冷却或操作冷却，不向 Worker pull/claim 任务，避免云端任务被设备拿走后无法发送。
 - Worker `/v1/tasks/pull` 同样强制执行设备 safety gate。即使客户端误调用 pull，`risk_stopped`、`cooldown`、`cooling_down` 设备也只会得到 `paused: true` 和空任务列表。
 - Worker 会自动释放超过 10 分钟仍未回流结果的 `claimed` 任务，重新置为 `pending` 并记录 `task_claim_expired` 事件。
@@ -36,7 +36,7 @@
    - 可查看设备、任务、事件、积分。
    - 可查看设备发送安全状态，例如 `可发送`、`risk stop`、`冷却`。
    - 可创建广播任务。
-   - 可对 sent/claimed 任务注入验收 read 事件，触发积分入账。
+   - sent/claimed 任务的 read 入账通过脚本/真机注入验收；Web 注入已移除。
    - 可对 failed/claimed 任务点击 `重新排队`，恢复为 pending。
 
 4. Android 原型客户端

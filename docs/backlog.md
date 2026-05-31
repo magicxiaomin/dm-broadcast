@@ -10,10 +10,14 @@
 - 目标：补兑换申请、人工审批、幂等扣分（`ledger_entries` entry_type=redeem，唯一约束防重复）。
 - 验收（草案）：worker:safety-smoke 覆盖「余额不足拒绝 / 通过后幂等扣分 / 拒绝不扣分」；Web 有审批队列页。
 
-### B2 · 设备端鉴权（per-device token）
-- 现状：设备端无 token，仅部分 admin 路由有 ADMIN_TOKEN。任意调用方可注册设备 / 拉任务 / 报事件。
-- 目标：评估 spec 的 `/auth/bind` 弱证明 + device_token（KV 存 `dt:{token}`），设备路由强制校验。
-- 验收（草案）：无效 token 的 pull/register/events 返回 401；smoke 覆盖。
+### B2-min · 双钥匙最小鉴权（已完成）
+- 现状：`/health` 公开；运营路由需 `ADMIN_TOKEN`；设备路由需共享 `DEVICE_TOKEN`；二者均通过 `Authorization: Bearer <token>` 传递。
+- 覆盖：无 token / 错 token / 设备 token 调运营路由的拒绝断言已进入 `worker:safety-smoke`。
+
+### B2-full · 每设备鉴权（per-device token）
+- 现状：B2-min 仍是共享设备钥匙，没有 owner scope、每设备 token 或绑定证明。
+- 目标：评估 spec 的 `/auth/bind` 弱证明 + device_token（KV 存 `dt:{token}`），设备路由强制校验每设备身份与作用域。
+- 验收（草案）：无效 token 的 pull/register/events 返回 401；设备 A token 不能拉/报设备 B 任务；smoke 覆盖。
 
 ## 工程债（已决定暂留，到点再迁）
 

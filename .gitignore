@@ -1,6 +1,8 @@
 node_modules/
 .env.local
 .env.*.local
+.dev.vars
+**/.dev.vars
 .wrangler/
 outputs/
 waweb.zip

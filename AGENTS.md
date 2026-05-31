@@ -79,7 +79,7 @@ cd apps/android && ./gradlew :app:assembleDebug   # 或用 docs/acceptance-plan.
 
 ```
 运营后台 Web (apps/web)
-   │ POST /v1/campaigns · GET /v1/dashboard · POST /v1/tasks/requeue · POST /v1/events(注入 read)
+   │ POST /v1/campaigns · GET /v1/dashboard · POST /v1/tasks/requeue
    ▼
 任务云 Cloudflare (apps/worker)
    手写路由 · D1(6表) · KV(STATE) · safety gate · stale-claim 自动释放
@@ -112,18 +112,18 @@ cd apps/android && ./gradlew :app:assembleDebug   # 或用 docs/acceptance-plan.
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /health | 健康检查 |
-| GET | /v1/dashboard | 后台汇总（设备/任务/事件/ledger） |
-| GET/POST | /v1/devices · /v1/devices/register | 设备列表 / 注册（含 safety 上报） |
-| GET/POST | /v1/contacts · /v1/contacts/sync | 联系人列表 / 同步 |
-| GET/POST | /v1/campaigns | 广播列表 / 创建（展开 tasks） |
-| GET | /v1/tasks · /v1/tasks/pull | 任务列表 / 原子认领（safety gate + stale 释放） |
-| POST | /v1/tasks/requeue | failed/claimed → pending |
-| POST | /v1/events | message_sent/failed/read/message_ack（ack 按 server_msg_id 归因加分） |
-| GET | /v1/ledger | 积分流水 |
+| GET | /health | 健康检查（公开） |
+| GET | /v1/dashboard | 后台汇总（设备/任务/事件/ledger，需 ADMIN_TOKEN） |
+| GET/POST | /v1/devices · /v1/devices/register | 设备列表（ADMIN_TOKEN） / 注册（DEVICE_TOKEN，含 safety 上报） |
+| GET/POST | /v1/contacts · /v1/contacts/sync | 联系人列表（ADMIN_TOKEN） / 同步（DEVICE_TOKEN） |
+| GET/POST | /v1/campaigns | 广播列表 / 创建（展开 tasks，需 ADMIN_TOKEN） |
+| GET | /v1/tasks · /v1/tasks/pull | 任务列表（ADMIN_TOKEN） / 原子认领（DEVICE_TOKEN，safety gate + stale 释放） |
+| POST | /v1/tasks/requeue | failed/claimed → pending（需 ADMIN_TOKEN） |
+| POST | /v1/events | message_sent/failed/read/message_ack（需 DEVICE_TOKEN；ack 按 server_msg_id 归因加分） |
+| GET | /v1/ledger | 积分流水（需 ADMIN_TOKEN） |
 | POST | /v1/admin/cleanup-test-data | 清测试数据（需 ADMIN_TOKEN） |
 
-鉴权现状：部分管理路由用 `Authorization: Bearer <ADMIN_TOKEN>`。**设备端暂无 per-device token**（spec 设想的 `/auth/bind` 弱证明未实现，见 backlog）。
+鉴权现状：B2-min 已落地，所有 `/v1/*` 路由除 `/health` 外统一使用 `Authorization: Bearer <token>`。运营路由只接受 `ADMIN_TOKEN`，设备路由只接受共享 `DEVICE_TOKEN`。`DEVICE_TOKEN` 是 MVP 共享设备钥匙，不是 per-device token；spec 设想的 `/auth/bind` 弱证明与每设备 token 仍留在 B2-full backlog。
 
 ---
 
@@ -216,7 +216,8 @@ FCM/APNs 推送 · LLM 改写文案 · 强身份证明 · 现金提现 · 订阅
 | # | 缺口 / 偏离 | 决定 |
 |---|---|---|
 | B1 | redemptions 兑换审批（表+路由）完全缺失 | 真缺口，开 ticket 补 |
-| B2 | 设备端无 per-device token（仅 admin token） | 真缺口，评估鉴权层 A |
+| B2-min | 双钥匙最小鉴权（ADMIN_TOKEN / DEVICE_TOKEN） | 已落地 |
+| B2-full | 每设备 token / owner scope / `/auth/bind` 弱证明 | 真缺口，排后续 ticket |
 | B3 | Web 是 Vite 原生 TS，非 Next.js+shadcn | 暂留 Vite，迁移排 ticket |
 | B4 | wa-sdk AAR 13MB 提交进 git，非 Maven | 暂留 git，迁移排 ticket |
 | B5 | 验证脚本依赖（miniflare/esbuild）未声明 | 本 PR 已补进 devDependencies |

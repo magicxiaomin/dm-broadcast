@@ -62,6 +62,15 @@ const metadata = {
           },
         ]
       : []),
+    ...(process.env.DM_DEVICE_TOKEN
+      ? [
+          {
+            type: "plain_text",
+            name: "DEVICE_TOKEN",
+            text: process.env.DM_DEVICE_TOKEN,
+          },
+        ]
+      : []),
   ],
 };
 

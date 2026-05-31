@@ -225,6 +225,11 @@ p {
   min-width: 220px;
 }
 
+.api-form input[name="adminToken"] {
+  flex: 0 1 190px;
+  min-width: 150px;
+}
+
 .toggle {
   display: inline-flex;
   align-items: center;
