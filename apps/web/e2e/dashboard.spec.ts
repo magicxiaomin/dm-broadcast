@@ -25,6 +25,18 @@ const dashboard = {
       safety_retry_after_seconds: 0,
       safety_json: JSON.stringify({ state: "connected" }),
       last_seen_at: 1770000000000,
+      user_id: "user-creator-a",
+    },
+    {
+      id: "android-wa-unassigned",
+      device_name: "spare-phone",
+      wa_jid: "8613000000000@s.whatsapp.net",
+      status: "offline",
+      safety_status: "ready",
+      safety_retry_after_seconds: 0,
+      safety_json: JSON.stringify({ state: "connected" }),
+      last_seen_at: 1770000005000,
+      user_id: null,
     },
   ],
   campaigns: [
@@ -95,6 +107,24 @@ const contacts = {
   ],
 };
 
+const users = {
+  ok: true,
+  users: [
+    {
+      id: "user-creator-a",
+      display_name: "萝卜胡",
+      notes: "主测试号",
+      device_count: 1,
+      points: 7,
+      ledger_entries: 1,
+      pending_tasks: 1,
+      pending_points: 7,
+      created_at: 1770000000000,
+      updated_at: 1770000000000,
+    },
+  ],
+};
+
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
   await page.goto("/");
@@ -109,8 +139,8 @@ test("总览页渲染 mock 的设备、任务、积分数据并展示诚实标�
   await expect(page.getByText("message_ack")).toBeVisible();
 
   await expect(page.getByText("活跃(近 15 分钟)")).toBeVisible();
-  await expect(page.getByText("待确认")).toBeVisible();
-  await expect(page.getByText("已入账")).toBeVisible();
+  await expect(page.getByRole("main").getByText("待确认", { exact: true })).toBeVisible();
+  await expect(page.getByRole("main").getByText("已入账", { exact: true })).toBeVisible();
   await expect(page.getByText("在线")).toHaveCount(0);
 });
 
@@ -157,6 +187,81 @@ test("内容下发表单提交 POST /v1/campaigns 且携带 Bearer token 和正�
   await expect(page.getByText("任务已创建：1 条，等待设备轮询领取")).toBeVisible();
 });
 
+test("用户页建 user，设备页分配归属，Ledger 按真实 User 聚合展示", async ({ page }) => {
+  let createUserRequest: { headers: Record<string, string>; body: unknown } | null = null;
+  let assignRequest: { headers: Record<string, string>; body: unknown } | null = null;
+
+  await page.route(`${apiBase}/v1/users`, async (route) => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      createUserRequest = {
+        headers: request.headers(),
+        body: request.postDataJSON(),
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          user: {
+            id: "user-created",
+            display_name: "新创作者",
+            notes: "e2e",
+            device_count: 0,
+            points: 0,
+            pending_tasks: 0,
+            pending_points: 0,
+          },
+        }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(users) });
+  });
+  await page.route(`${apiBase}/v1/devices/assign`, async (route) => {
+    assignRequest = {
+      headers: route.request().headers(),
+      body: route.request().postDataJSON(),
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, device: { id: "android-wa-unassigned", user_id: "user-creator-a" } }),
+    });
+  });
+
+  await page.getByLabel("ADMIN_TOKEN").fill(adminToken);
+  await page.getByRole("button", { name: "连接" }).click();
+  await expect(page.getByText("已刷新")).toBeVisible();
+
+  await page.getByRole("button", { name: "用户" }).click();
+  await expect(page.getByRole("main").getByRole("heading", { name: "用户", exact: true })).toBeVisible();
+  await expect(page.getByText("萝卜胡")).toBeVisible();
+  await expect(page.getByText("已入账").first()).toBeVisible();
+  await expect(page.getByText("待确认").first()).toBeVisible();
+  await expect(page.getByText("7 分").first()).toBeVisible();
+
+  await page.getByLabel("用户 ID").fill("user-created");
+  await page.getByLabel("显示名称").fill("新创作者");
+  await page.getByLabel("备注").fill("e2e");
+  await page.getByRole("button", { name: "创建用户" }).click();
+  await expect.poll(() => createUserRequest).not.toBeNull();
+  expect(createUserRequest?.headers.authorization).toBe(`Bearer ${adminToken}`);
+  expect(createUserRequest?.body).toEqual({ id: "user-created", displayName: "新创作者", notes: "e2e" });
+
+  await page.getByRole("button", { name: "设备管理" }).click();
+  await expect(page.locator(".badge", { hasText: "未归属" })).toBeVisible();
+  await page.getByLabel("归属用户 android-wa-unassigned").selectOption("user-creator-a");
+  await expect.poll(() => assignRequest).not.toBeNull();
+  expect(assignRequest?.headers.authorization).toBe(`Bearer ${adminToken}`);
+  expect(assignRequest?.body).toEqual({ deviceId: "android-wa-unassigned", userId: "user-creator-a" });
+
+  await page.getByRole("button", { name: "积分 Ledger" }).click();
+  await expect(page.getByText("真实 User 汇总")).toBeVisible();
+  await expect(page.getByText("萝卜胡")).toBeVisible();
+  await expect(page.getByText("android-wa-8618205924392-8")).toHaveCount(0);
+});
+
 async function mockApi(page: Page) {
   await page.route("**/*", async (route) => {
     const url = route.request().url();
@@ -181,6 +286,10 @@ async function fulfillApi(route: Route) {
   }
   if (request.method() === "GET" && url.pathname === "/v1/contacts") {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(contacts) });
+    return;
+  }
+  if (request.method() === "GET" && url.pathname === "/v1/users") {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(users) });
     return;
   }
   if (request.method() === "POST" && url.pathname === "/v1/campaigns") {

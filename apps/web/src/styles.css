@@ -126,6 +126,7 @@ p {
 .nav {
   flex: 1;
   padding: 12px;
+  overflow-y: auto;
 }
 
 .nav-item {
@@ -621,6 +622,22 @@ label > span {
   text-overflow: ellipsis;
 }
 
+.block {
+  display: block;
+  margin-top: 4px;
+}
+
+.assignment-cell {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr);
+  gap: 8px;
+  min-width: 190px;
+}
+
+.assignment-cell select {
+  min-width: 190px;
+}
+
 .auth-screen {
   min-height: 100vh;
   display: grid;
@@ -685,7 +702,7 @@ label > span {
 
   .nav {
     display: grid;
-    grid-template-columns: repeat(5, minmax(120px, 1fr));
+    grid-template-columns: repeat(6, minmax(120px, 1fr));
     overflow-x: auto;
   }
 
@@ -724,6 +741,6 @@ label > span {
   }
 
   .nav {
-    grid-template-columns: repeat(5, 180px);
+    grid-template-columns: repeat(6, 180px);
   }
 }

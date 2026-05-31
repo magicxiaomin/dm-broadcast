@@ -80,8 +80,10 @@
 - `GET /v1/users` 同时返回已入账 `points` 与 per-user 待确认 `pending_points` / `pending_tasks`，供 B14b 前端诚实标签使用。
 - migration 采用 `_dm_migrations` 跟踪表，`db:migrate` 与 Miniflare smoke 共用同一套“按文件名排序、仅应用未跑过 migration”的逻辑。
 
-### B14b · 用户账号系统 Web 管理（待做）
-- 目标：在现有 Vite Web 后台展示 users、设备归属、已入账/待确认聚合，并提供运营手动绑定设备的入口。
+### B14b · 用户账号系统 Web 管理（已完成）
+- 现状：现有 Vite Web 后台已新增「用户」页，可创建运营维护的 user，并展示 per-user 待确认/已入账聚合。
+- 设备管理页已展示 `user_id` 归属，支持把设备分配给 user；未归属设备显示「未归属」。
+- Ledger 页「用户汇总」已改为消费 B14a 的 `GET /v1/users`，按真实 User 聚合，而不是按 device_id 聚合。
 - 边界：仍无用户登录/auth；不做 B2-full owner scope；不重写 ledger。
 
 ### B14-full · 用户身份与 owner scope（未来重构）
