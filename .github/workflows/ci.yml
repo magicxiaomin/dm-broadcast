@@ -27,5 +27,11 @@ jobs:
       - name: Web build
         run: npm run web:build
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Web E2E (Playwright, hermetic)
+        run: npm run web:e2e
+
       - name: Worker smoke (Miniflare, hermetic)
         run: npm run worker:safety-smoke

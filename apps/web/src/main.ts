@@ -262,6 +262,13 @@ function deviceSafety(device: Row) {
   return bridge || "-";
 }
 
+function deviceActivityLabel(device: Row) {
+  const status = String(device.status || "");
+  if (status === "online") return "活跃(近 15 分钟)";
+  if (status === "offline") return "未活跃";
+  return status || "-";
+}
+
 function isAccountScopedDevice(device: Row) {
   return String(device.id || "").startsWith("android-wa-");
 }
@@ -492,16 +499,16 @@ function renderOverview(data: ReturnType<typeof visibleData>) {
       metric("设备", data.devices.length || "-", "accent"),
       metric("可发送", readyDevices || "-"),
       metric("待发送", countStatus(data.tasks, "pending") + countStatus(data.tasks, "claimed")),
-      metric("已发送", countStatus(data.tasks, "sent")),
+      metric("待确认", countStatus(data.tasks, "sent")),
       metric("已读", countStatus(data.tasks, "read"), "success"),
-      metric("积分", sumPoints(data.ledger) || "-", "warning"),
+      metric("已入账", sumPoints(data.ledger) || "-", "warning"),
     ]),
     el("section", { class: "grid two" }, [
       card("设备健康", [
-        table(["设备", "账号", "状态", "发送安全", "最后在线"], data.devices.map((device) => [
+        table(["设备", "账号", "状态", "发送安全", "最后活跃"], data.devices.map((device) => [
           el("span", { class: "mono", text: shortId(device.id, 24) }),
           el("span", { class: "mono muted", text: textCell(device.wa_jid) }),
-          badge(device.status, statusTone(device.status)),
+          badge(deviceActivityLabel(device), statusTone(device.status)),
           badge(deviceSafety(device), statusTone(device.safety_status)),
           el("span", { class: "tnum muted", text: fmtTime(device.last_seen_at) }),
         ])),
@@ -697,10 +704,10 @@ function renderDevices(data: ReturnType<typeof visibleData>) {
       oninput: (event: Event) => { state.deviceFilter = (event.currentTarget as HTMLInputElement).value; render(); },
     })),
     card("已注册设备", [
-      table(["设备", "WA 账号", "状态", "发送安全", "retry", "最后在线"], devices.map((device) => [
+      table(["设备", "WA 账号", "状态", "发送安全", "retry", "最后活跃"], devices.map((device) => [
         el("span", { class: "mono", text: textCell(device.id) }),
         el("span", { class: "mono muted", text: textCell(device.wa_jid) }),
-        badge(device.status, statusTone(device.status)),
+        badge(deviceActivityLabel(device), statusTone(device.status)),
         badge(deviceSafety(device), statusTone(device.safety_status)),
         el("span", { class: "tnum muted", text: `${Number(device.safety_retry_after_seconds || 0)}s` }),
         el("span", { class: "tnum muted", text: fmtTime(device.last_seen_at) }),
