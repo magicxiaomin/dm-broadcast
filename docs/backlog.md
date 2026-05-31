@@ -35,6 +35,19 @@
 - 它们是手动/夜间验收入口；主 CI 只跑 hermetic 的 `worker:check + web:build + worker:safety-smoke`。
 - 后续可考虑：用专用 staging Worker + 定时 workflow 跑线上 smoke。
 
+### B8 · Web 行为 E2E（进 CI）
+- 现状：Web 只有 `web:build`（编译级），无行为测试。
+- 目标：headless 浏览器（Playwright）驱动 + 断言，至少覆盖：总览渲染、建广播、注入 read 后积分变化。
+- 验收（草案）：新增 `web:e2e` 脚本进「Sanity Checks / build」；CI 绿。Codex 可附运行截图。
+
+### B10 · 安卓真机验证脚本（Codex 本地跑，产出证据）
+- 现状：Android 只有 `assembleDebug`（编译级），行为全靠手动。
+- 目标：Codex 用 ADB 截屏 + 驱动一次 `pull → sendText` 流程，产出截图/日志附 PR。
+- 边界：依赖物理真机，**不进 GitHub CI**；属 Codex 在挂设备的 Mac 上跑的证据项，Claude 审证据 + 人抽查。
+
+### B9 · 测试节奏写进 AGENTS.md（本 PR 已做）
+- AGENTS.md「测试责任」小节已明确 A / A+ / B+ / C 各区谁跑、何时跑、证据形式。
+
 ## 一致性
 
 ### B6 · spec 与代码命名差异（已认基线，仅记录）
