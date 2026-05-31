@@ -361,6 +361,11 @@ try {
   if (Number(ackLedger?.points || 0) !== 7) {
     throw new Error(`ack_level=2 did not create read_reward ledger: ${JSON.stringify(ackLedger)}`);
   }
+  const state = await mf.getKVNamespace("STATE");
+  const stateKeys = await state.list();
+  if (stateKeys.keys.length !== 0) {
+    throw new Error(`STATE KV should not be written on hot paths, found keys: ${stateKeys.keys.map((key) => key.name).join(", ")}`);
+  }
 
   console.log(JSON.stringify({
     ok: true,
@@ -371,6 +376,7 @@ try {
     requeuedTaskId: requeueTaskId,
     staleClaimReleasedTaskId: requeueTaskId,
     ackReadTaskId: ackTask.id,
+    stateKvKeys: stateKeys.keys.length,
   }, null, 2));
 } finally {
   await mf.dispose();

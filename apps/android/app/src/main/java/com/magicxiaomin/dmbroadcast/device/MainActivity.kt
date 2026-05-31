@@ -57,7 +57,8 @@ class MainActivity : Activity() {
     private var polling = false
     private var lastTask: CloudTask? = null
     private var lastReportedDeviceStatus = ""
-    private var lastReportedSafetySignature = ""
+    private var lastReportedSafetyState = ""
+    private var lastDeviceReportAtMs = 0L
     @Volatile private var riskStopped = false
 
     data class CloudTask(
@@ -234,7 +235,8 @@ class MainActivity : Activity() {
             pendingTaskByClientMsgId.clear()
             lastTask = null
             lastReportedDeviceStatus = ""
-            lastReportedSafetySignature = ""
+            lastReportedSafetyState = ""
+            lastDeviceReportAtMs = 0L
             connected = json.optBoolean("is_connected", connected)
             appendLogOnMain("SELF $identity")
             appendLogOnMain("DEVICE scoped id=$deviceId")
@@ -395,9 +397,6 @@ class MainActivity : Activity() {
     private fun refreshSafetyStatus() {
         runBridgeCall {
             val safety = readSafetyStatus()
-            if (safety != null) {
-                registerDevice(safety)
-            }
             appendLogOnMain("SAFETY ${safety ?: "{}"}")
         }
     }
@@ -437,10 +436,14 @@ class MainActivity : Activity() {
     }
 
     private fun reportDeviceStatus(deviceStatus: String, safety: JSONObject? = null) {
-        val safetySignature = safety?.toString() ?: ""
-        if (deviceStatus == lastReportedDeviceStatus && safetySignature == lastReportedSafetySignature) return
+        val safetyState = reportableSafetyState(deviceStatus, safety)
+        val now = System.currentTimeMillis()
+        val stateChanged = deviceStatus != lastReportedDeviceStatus || safetyState != lastReportedSafetyState
+        val reportDue = now - lastDeviceReportAtMs >= DEVICE_REPORT_INTERVAL_MS
+        if (!stateChanged && !reportDue) return
         lastReportedDeviceStatus = deviceStatus
-        lastReportedSafetySignature = safetySignature
+        lastReportedSafetyState = safetyState
+        lastDeviceReportAtMs = now
         Thread {
             runCatching {
                 val body = JSONObject()
@@ -459,11 +462,25 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun reportableSafetyState(deviceStatus: String, safety: JSONObject?): String {
+        if (safety == null) return deviceStatus
+        val risk = safety.optBoolean("risk_stopped", false)
+        val riskWait = safety.optInt("risk_retry_after_seconds", 0)
+        val sendWait = safety.optInt("send_retry_after_seconds", 0)
+        val operationWait = safety.optInt("operation_retry_after_seconds", 0)
+        val wait = maxOf(riskWait, sendWait, operationWait)
+        val bridgeState = safety.optString("state")
+        val notConnected = bridgeState.isNotBlank() && bridgeState != "connected"
+        return when {
+            risk -> "risk_stopped"
+            wait > 0 || notConnected || deviceStatus == "cooldown" -> "cooldown"
+            deviceStatus == "online" -> "online"
+            else -> deviceStatus
+        }
+    }
+
     private fun isSendAllowedBySafety(): Boolean {
         val safety = readSafetyStatus() ?: return false
-        runCatching { registerDevice(safety) }
-            .exceptionOrNull()
-            ?.let { appendLogOnMain("SAFETY report error ${it.message}") }
         val riskWait = safety.optInt("risk_retry_after_seconds", 0)
         val sendWait = safety.optInt("send_retry_after_seconds", 0)
         val operationWait = safety.optInt("operation_retry_after_seconds", 0)
@@ -656,5 +673,6 @@ class MainActivity : Activity() {
         private const val FALLBACK_DEVICE_ID = "android-prototype"
         private const val DEVICE_ID_PREFIX = "android-wa-"
         private const val POLL_INTERVAL_MS = 10_000L
+        private const val DEVICE_REPORT_INTERVAL_MS = 60_000L
     }
 }
