@@ -18,6 +18,7 @@
     "readiness:check": "node scripts/readiness-check.mjs",
     "multi-device:preflight": "node scripts/multi-device-preflight.mjs",
     "account-isolation:check": "node scripts/account-isolation-check.mjs",
+    "android:verify": "node scripts/android-device-verify.mjs",
     "e2e:real": "node scripts/real-e2e.mjs",
     "acceptance:check": "node scripts/acceptance-check.mjs"
   },

@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -361,6 +362,7 @@ class MainActivity : Activity() {
             return
         }
         appendLogOnMain("SEND ${task.id} -> $sendTarget (${task.points} pts)")
+        appendLogOnMain("message_send_start task=${task.id} target=$sendTarget")
         val result = runCatching {
             client.sendText(sendTarget, task.text, task.clientMsgId)
         }
@@ -612,6 +614,7 @@ class MainActivity : Activity() {
     }
 
     private fun appendLog(line: String) {
+        Log.i(LOG_TAG, line)
         logView.append(line + "\n")
         logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
     }
@@ -649,6 +652,7 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        private const val LOG_TAG = "DmBroadcast"
         private const val FALLBACK_DEVICE_ID = "android-prototype"
         private const val DEVICE_ID_PREFIX = "android-wa-"
         private const val POLL_INTERVAL_MS = 10_000L
