@@ -350,31 +350,88 @@ async function assignDevice(request: Request, env: Env) {
 
 async function syncContacts(request: Request, env: Env) {
   const body = await readJson<{
+    deviceId?: string;
+    device_id?: string;
     contacts?: Array<{ jid?: string; name?: string }>;
   }>(request);
-  const contacts = body.contacts || [];
+  const deviceId = (body.deviceId || body.device_id || "").trim();
+  if (!deviceId) return badRequest("deviceId is required");
+  const device = await env.DB.prepare("SELECT id FROM devices WHERE id = ?").bind(deviceId).first<{ id: string }>();
+  if (!device) return badRequest("deviceId does not exist");
+
+  const contacts = (body.contacts || []).filter((contact) => (contact.jid || "").trim());
   const now = nowMs();
   const statements = contacts
-    .filter((contact) => (contact.jid || "").trim())
-    .map((contact) => {
+    .flatMap((contact) => {
       const jid = (contact.jid || "").trim();
-      return env.DB.prepare(
-        `INSERT INTO contacts (id, wa_jid, display_name, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(wa_jid) DO UPDATE SET
-           display_name = COALESCE(excluded.display_name, contacts.display_name),
-           updated_at = excluded.updated_at`,
-      ).bind(`contact_${jid}`, jid, contact.name || null, now, now);
+      const displayName = contact.name || null;
+      return [
+        env.DB.prepare(
+          `INSERT INTO contacts (id, wa_jid, display_name, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(wa_jid) DO UPDATE SET
+             display_name = COALESCE(excluded.display_name, contacts.display_name),
+             updated_at = excluded.updated_at`,
+        ).bind(`contact_${jid}`, jid, displayName, now, now),
+        env.DB.prepare(
+          `INSERT INTO device_contacts (device_id, wa_jid, display_name, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(device_id, wa_jid) DO UPDATE SET
+             display_name = COALESCE(excluded.display_name, device_contacts.display_name),
+             updated_at = excluded.updated_at`,
+        ).bind(deviceId, jid, displayName, now, now),
+      ];
     });
 
   if (statements.length) {
     await env.DB.batch(statements);
   }
 
-  return json({ ok: true, synced: statements.length });
+  return json({ ok: true, synced: contacts.length });
 }
 
-async function listContacts(env: Env) {
+async function listContacts(request: Request, env: Env) {
+  const url = new URL(request.url);
+  const deviceId = (url.searchParams.get("deviceId") || "").trim();
+  const userId = (url.searchParams.get("userId") || "").trim();
+  if (deviceId && userId) return badRequest("use either deviceId or userId, not both");
+
+  if (deviceId) {
+    const rows = await env.DB.prepare(
+      `SELECT
+         dc.device_id,
+         d.device_name,
+         dc.wa_jid,
+         dc.display_name,
+         dc.created_at,
+         dc.updated_at
+       FROM device_contacts dc
+       LEFT JOIN devices d ON d.id = dc.device_id
+       WHERE dc.device_id = ?
+       ORDER BY dc.updated_at DESC
+       LIMIT 500`,
+    ).bind(deviceId).all();
+    return json({ ok: true, contacts: rows.results ?? [] });
+  }
+
+  if (userId) {
+    const rows = await env.DB.prepare(
+      `SELECT
+         dc.device_id,
+         d.device_name,
+         dc.wa_jid,
+         dc.display_name,
+         dc.created_at,
+         dc.updated_at
+       FROM device_contacts dc
+       INNER JOIN devices d ON d.id = dc.device_id
+       WHERE d.user_id = ?
+       ORDER BY dc.updated_at DESC
+       LIMIT 500`,
+    ).bind(userId).all();
+    return json({ ok: true, contacts: rows.results ?? [] });
+  }
+
   const rows = await env.DB.prepare("SELECT * FROM contacts ORDER BY updated_at DESC LIMIT 500").all();
   return json({ ok: true, contacts: rows.results ?? [] });
 }
@@ -959,7 +1016,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/devices/register") return requireAuth(request, env, ["device"]) ?? registerDevice(request, env);
     if (request.method === "GET" && url.pathname === "/v1/users") return requireAuth(request, env, ["admin"]) ?? listUsers(env);
     if (request.method === "POST" && url.pathname === "/v1/users") return requireAuth(request, env, ["admin"]) ?? createUser(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/contacts") return requireAuth(request, env, ["admin"]) ?? listContacts(env);
+    if (request.method === "GET" && url.pathname === "/v1/contacts") return requireAuth(request, env, ["admin"]) ?? listContacts(request, env);
     if (request.method === "POST" && url.pathname === "/v1/contacts/sync") return requireAuth(request, env, ["device"]) ?? syncContacts(request, env);
     if (request.method === "GET" && url.pathname === "/v1/campaigns") return requireAuth(request, env, ["admin"]) ?? listCampaigns(env);
     if (request.method === "POST" && url.pathname === "/v1/campaigns") return requireAuth(request, env, ["admin"]) ?? createCampaign(request, env);

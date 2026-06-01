@@ -86,6 +86,13 @@
 - Ledger 页「用户汇总」已改为消费 B14a 的 `GET /v1/users`，按真实 User 聚合，而不是按 device_id 聚合。
 - 边界：仍无用户登录/auth；不做 B2-full owner scope；不重写 ledger。
 
+### B17a · 联系人归属设备/用户后端（已完成）
+- 已新增 `device_contacts` 归属表，`PRIMARY KEY(device_id, wa_jid)`，允许同一联系人 JID 同时属于多台设备。
+- `POST /v1/contacts/sync` 必须显式传 `deviceId`，同步结果写入 `device_contacts`；Android 客户端同步 body 已带现有 `deviceId`。
+- `GET /v1/contacts?deviceId=...` 可按设备读联系人；`GET /v1/contacts?userId=...` 可按用户归属设备聚合联系人；无 filter 仍保留旧全局 `contacts` 兼容视图。
+- 存量全局 `contacts` 不回填归属，避免伪造设备/用户所有权；设备重新同步后形成可信归属数据。
+- 边界：不改 `createCampaign` 下发逻辑；不做 B15 去重；不做 B2-full。
+
 ### B14-full · 用户身份与 owner scope（未来重构）
 - 现状：B14a 只有运营维护的 User 实体；IM 账号（self_jid）与设备仍是真实执行身份，`ledger.user_id` 仍是 device id。
 - 目标：若后续产品化，再引入真实 User 注册/登录/资料、每设备 token、owner scope、`/auth/bind` 弱证明，并评估存量 ledger 迁移。

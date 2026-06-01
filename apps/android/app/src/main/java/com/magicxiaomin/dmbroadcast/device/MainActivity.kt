@@ -271,7 +271,12 @@ class MainActivity : Activity() {
                     contacts.put(JSONObject().put("jid", jid).put("name", item.optString("name")))
                 }
             }
-            val response = postJson("/v1/contacts/sync", JSONObject().put("contacts", contacts))
+            val response = postJson(
+                "/v1/contacts/sync",
+                JSONObject()
+                    .put("deviceId", deviceId)
+                    .put("contacts", contacts),
+            )
             appendLogOnMain("CLOUD contacts ${response.optInt("synced")} / ${source.length()}")
         }
     }
@@ -298,10 +303,12 @@ class MainActivity : Activity() {
             val preferredJid = preferredJidFromUserInfo(jid) ?: jid
             val response = postJson(
                 "/v1/contacts/sync",
-                JSONObject().put(
-                    "contacts",
-                    JSONArray().put(JSONObject().put("jid", preferredJid).put("name", "小号 +85255804693")),
-                ),
+                JSONObject()
+                    .put("deviceId", deviceId)
+                    .put(
+                        "contacts",
+                        JSONArray().put(JSONObject().put("jid", preferredJid).put("name", "小号 +85255804693")),
+                    ),
             )
             appendLogOnMain("CLOUD resolved contact synced ${response.optInt("synced")} jid=$preferredJid")
         }

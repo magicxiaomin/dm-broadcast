@@ -111,6 +111,7 @@ await tapText("连接 / 生成二维码");
 await waitForLog(/IM connected|SELF .*"state":"connected"|DEVICE scoped id=/, 30000, "bridge_connected");
 await tapText("读取身份");
 await sleep(1500);
+summary.contactOwnership = await waitForOwnedContacts(scopedDeviceId, startedAt.getTime());
 await tapText("启动轮询");
 await sleep(1500);
 await screenshot("02-polling.png");
@@ -266,6 +267,47 @@ async function assertDeviceCanSend(id) {
       message: "Refusing to create a real IM task while the Android device is blocked by SDK safety.",
     });
   }
+}
+
+async function waitForOwnedContacts(id, minUpdatedAt) {
+  const end = Date.now() + 30000;
+  let last = null;
+  while (Date.now() < end) {
+    const data = await api(`/v1/contacts?deviceId=${encodeURIComponent(id)}`);
+    const contacts = data.contacts || [];
+    const freshContacts = contacts.filter((contact) => Number(contact.updated_at || 0) >= minUpdatedAt);
+    last = {
+      count: contacts.length,
+      freshCount: freshContacts.length,
+      minUpdatedAt,
+      sample: contacts.slice(0, 5).map((contact) => ({
+        device_id: contact.device_id,
+        wa_jid: contact.wa_jid,
+        display_name: contact.display_name || null,
+        updated_at: contact.updated_at,
+      })),
+    };
+    if (
+      freshContacts.length > 0 &&
+      contacts.every((contact) => contact.device_id === id) &&
+      freshContacts.every((contact) => contact.device_id === id)
+    ) {
+      return {
+        ok: true,
+        deviceId: id,
+        count: contacts.length,
+        freshCount: freshContacts.length,
+        minUpdatedAt,
+        includesRecipient: contacts.some((contact) => contact.wa_jid === contactJid),
+        sample: last.sample,
+      };
+    }
+    await sleep(2000);
+  }
+  await safeExit(3, "contact_ownership_timeout", {
+    contactOwnership: last,
+    message: `Timed out waiting for device_contacts rows owned by ${id}; no real IM task was created.`,
+  });
 }
 
 function isReadyDevice(device) {

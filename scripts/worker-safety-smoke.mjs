@@ -69,7 +69,11 @@ const mf = new Miniflare({
 try {
   const db = await mf.getD1Database("DB");
   const firstMigrations = await applyMigrationsToD1(db, migrationsDir);
-  if (!firstMigrations.applied.includes("0001_initial.sql") || !firstMigrations.applied.includes("0002_users.sql")) {
+  if (
+    !firstMigrations.applied.includes("0001_initial.sql") ||
+    !firstMigrations.applied.includes("0002_users.sql") ||
+    !firstMigrations.applied.includes("0003_device_contacts.sql")
+  ) {
     throw new Error(`expected all migrations to apply on fresh DB: ${JSON.stringify(firstMigrations)}`);
   }
   const secondMigrations = await applyMigrationsToD1(db, migrationsDir);
@@ -104,6 +108,12 @@ try {
     }),
   }, "admin", [400]);
   await expectStatus(mf, "pull requires deviceId", "/v1/tasks/pull?limit=1", { method: "GET" }, "device", [400]);
+  await expectStatus(mf, "contacts sync requires deviceId", "/v1/contacts/sync", {
+    method: "POST",
+    body: JSON.stringify({
+      contacts: [{ name: "missing owner", jid: "shared-contact@s.whatsapp.net" }],
+    }),
+  }, "device", [400]);
 
   await api(mf, "/v1/devices/register", {
     method: "POST",
@@ -498,6 +508,54 @@ try {
   if (users.users.some((user) => Number(user.points || 0) >= 11 && user.id !== "smoke-user-primary")) {
     throw new Error(`unassigned device points leaked into a user aggregate: ${JSON.stringify(users.users)}`);
   }
+  await api(mf, "/v1/contacts/sync", {
+    method: "POST",
+    body: JSON.stringify({
+      deviceId: "ack-read-device",
+      contacts: [
+        { name: "Shared From Ack Device", jid: "shared-contact@s.whatsapp.net" },
+        { name: "Ack Only", jid: "ack-only@s.whatsapp.net" },
+      ],
+    }),
+  }, "device");
+  await api(mf, "/v1/contacts/sync", {
+    method: "POST",
+    body: JSON.stringify({
+      deviceId: "user-second-device",
+      contacts: [
+        { name: "Shared From Second Device", jid: "shared-contact@s.whatsapp.net" },
+        { name: "Second Only", jid: "second-only@s.whatsapp.net" },
+      ],
+    }),
+  }, "device");
+  const contactsForAckDevice = await api(mf, "/v1/contacts?deviceId=ack-read-device", {}, "admin");
+  if (
+    contactsForAckDevice.contacts.length !== 2 ||
+    !contactsForAckDevice.contacts.some((contact) => contact.wa_jid === "shared-contact@s.whatsapp.net" && contact.device_id === "ack-read-device") ||
+    contactsForAckDevice.contacts.some((contact) => contact.device_id !== "ack-read-device")
+  ) {
+    throw new Error(`device contact ownership query returned wrong rows: ${JSON.stringify(contactsForAckDevice)}`);
+  }
+  const contactsForSecondDevice = await api(mf, "/v1/contacts?deviceId=user-second-device", {}, "admin");
+  if (
+    contactsForSecondDevice.contacts.length !== 2 ||
+    !contactsForSecondDevice.contacts.some((contact) => contact.wa_jid === "shared-contact@s.whatsapp.net" && contact.device_id === "user-second-device") ||
+    contactsForSecondDevice.contacts.some((contact) => contact.device_id !== "user-second-device")
+  ) {
+    throw new Error(`second device contact ownership query returned wrong rows: ${JSON.stringify(contactsForSecondDevice)}`);
+  }
+  const contactsForUser = await api(mf, "/v1/contacts?userId=smoke-user-primary", {}, "admin");
+  const sharedRowsForUser = contactsForUser.contacts.filter((contact) => contact.wa_jid === "shared-contact@s.whatsapp.net");
+  if (
+    sharedRowsForUser.length !== 2 ||
+    !sharedRowsForUser.some((contact) => contact.device_id === "ack-read-device") ||
+    !sharedRowsForUser.some((contact) => contact.device_id === "user-second-device")
+  ) {
+    throw new Error(`user contact ownership query should include shared jid once per device: ${JSON.stringify(contactsForUser)}`);
+  }
+  await expectStatus(mf, "contacts query rejects ambiguous owner filters", "/v1/contacts?deviceId=ack-read-device&userId=smoke-user-primary", {
+    method: "GET",
+  }, "admin", [400]);
   const ledgerIdentity = await db.prepare(
     "SELECT user_id FROM ledger_entries WHERE task_id = ? AND entry_type = 'read_reward'",
   ).bind(ackTask.id).first();
