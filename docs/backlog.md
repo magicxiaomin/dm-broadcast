@@ -91,12 +91,15 @@
 - 目标：若后续产品化，再引入真实 User 注册/登录/资料、每设备 token、owner scope、`/auth/bind` 弱证明，并评估存量 ledger 迁移。
 - 依赖/关联：**B1 兑换审批**（余额与兑换归 User）、**B2-full**（per-device token + owner scope）。
 
-### B15 · 防刷积分 / 反作弊（依赖 B14）
+### B15 · 防刷积分 / 反作弊（**MVP 暂不做，已搁置**；B14 依赖已满足）
 - 风险：一个 User 名下多台设备装**相同联系人**，对同一 recipient 重复发送，刷取重复 `read_reward`；真实触达没增加，积分虚高。
-- 核心规则：**同一 User 下，相同联系人（recipient JID）跨多设备只算一个有效触达**——按 `(user, recipient)` 去重，同一收件人对同一 user 的同一广播只计一次积分。
-- 关联 spec 中已设想但**代码未实现**的防刷常量：`NEW_OWNER_COOLDOWN_DAYS`（新账号冷静期不计分）、`RECIPIENT_DAILY_CAP`（同一 recipient 每日封顶）、弱证明下以兑换人工审批兜底。
-- 验收（草案）：smoke 覆盖「同一 user 两设备发同一 recipient，只入账一次」；跨设备 recipient 去重逻辑可验证。
-- 依赖：**B14**（需要 User↔设备 归属关系才能跨设备去重）。
+- 核心规则（目标）：**同一 User 下，相同联系人（recipient JID）跨多设备只算一个有效触达**——按 `(user, recipient)` 去重。
+- **设计阻塞点（捡起前必读）**：今天 `createCampaign` 只接单 `deviceId`，即「一个 campaign = 一台设备」。多设备发同一联系人是**跨 campaign**的重复，"每广播内去重"按现模型抓不到。要让去重真正生效需先二选一：
+  - **方案 B**：让 campaign 可一次 fan-out 到多设备（campaign = 广播活动，修正语义），去重键 `(user, recipient, campaign_id)` 自然生效；需改 `createCampaign` + 下发页多选设备。
+  - **方案 C**：不改模型，退用按天去重 `(user, recipient)` 每日一次（不是"每广播"语义）。
+- 关联 spec 未实现的防刷常量：`NEW_OWNER_COOLDOWN_DAYS`、`RECIPIENT_DAILY_CAP`（走方案 C 可复用）。
+- 决定（owner）：**MVP 阶段不做去重**，原型期刷分非当前重点；需要时按方案 B/C 再定。
+- 依赖：B14（已完成）。
 
 ## 一致性
 
