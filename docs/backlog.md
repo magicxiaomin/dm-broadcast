@@ -14,6 +14,12 @@
 - 现状：`/health` 公开；运营路由需 `ADMIN_TOKEN`；设备路由需共享 `DEVICE_TOKEN`；二者均通过 `Authorization: Bearer <token>` 传递。
 - 覆盖：无 token / 错 token / 设备 token 调运营路由的拒绝断言已进入 `worker:safety-smoke`。
 
+### B18 · 后台登录 via Cloudflare Access（代码与 Access 配置已完成，DNS 待验证）
+- 现状：运营后台人侧由 Cloudflare Access Email OTP 保护，Allow 邮箱 `magicxiaomin@gmail.com`；运营 Web 使用 `https://whatsapp.novelvela.com`，`/api/*` 同源代理到现有 Worker admin API。Pages custom domain 已创建，但仍等待 `whatsapp.novelvela.com` 的 CNAME 记录完成验证；过渡期 `dm-broadcast-web.pages.dev` 与 `*.dm-broadcast-web.pages.dev` 也被同一个 Access app 保护，避免无 demo 门的公开窗口。
+- Worker 运营路由双接受：`ADMIN_TOKEN`（脚本/本地/CI 兜底）或合法 `Cf-Access-Jwt-Assertion`（jose 验签 + `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` 校验）。
+- 设备路由继续只接受共享 `DEVICE_TOKEN`，仍走 `dm-broadcast-api.magicxiaomin.workers.dev`，不加交互式 Access。
+- Web 已移除 demo 口令弹框；线上无需手填 ADMIN_TOKEN，本地开发仍可用顶栏 token 兜底。
+
 ### B2-full · 每设备鉴权（per-device token）
 - 现状：B2-min 仍是共享设备钥匙，没有 owner scope、每设备 token 或绑定证明。
 - 目标：评估 spec 的 `/auth/bind` 弱证明 + device_token（KV 存 `dt:{token}`），设备路由强制校验每设备身份与作用域。
@@ -64,12 +70,12 @@
 - 已新增 `multi-device:preflight` 手动检查入口和 `docs/multi-device-testing.md` runbook。
 - 边界：未做 B2-full；本项不引入 per-device token，隔离依赖显式 deviceId 指派。
 
-### B13 · 前端打磨（apps/web，低优先）
+### B13 · 前端打磨（apps/web，已完成）
 来自对 `apps/web/src/main.ts` 的审计，均非功能 bug：
-- **#1 文案不一致**：`sent` 状态在总览 metric 显示「待确认」，但 `statusChipForTask` 仍显示「已发送」。诚实标签改动未贯穿，需统一术语。
-- **#2 残留 android-prototype 兜底**（B12 审计 PR #11 发现）：`defaultDeviceId()` 仍以 `"android-prototype"` 兜底，下拉框在零真实设备时仍提供该选项，可建出指向前登录桶的 campaign。改为：移除兜底；零真实设备时禁止下发并提示「无可用设备」。
-- **#3 缺 ADMIN_TOKEN 的 UX 断点**：demo 密码解锁后若未填 ADMIN_TOKEN，`/v1/dashboard` 返回 401，`refresh()` 仅提示「刷新失败：unauthorized」，不引导用户去顶栏填 token。加明确引导 / 区分两道门。
-- **#4 死代码（顺手清）**：`Dashboard.summary` 类型字段声明但未用（前端从过滤后数据重算 metric）。
+- **#1 文案不一致**：已统一 `sent` 为「待确认」。
+- **#2 残留 android-prototype 兜底**：已移除兜底；零真实 ready 设备时禁止下发并提示。
+- **#3 缺 ADMIN_TOKEN 的 UX 断点**：B18 后线上由 Cloudflare Access 登录；本地 401 明确提示填写 ADMIN_TOKEN 或线上走 Access。
+- **#4 死代码（顺手清）**：`Dashboard.summary` 死类型已删除。
 
 ## 身份与反作弊（未来架构，较重）
 

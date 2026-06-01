@@ -1,5 +1,6 @@
 import { unlink } from "node:fs/promises";
 import { build } from "esbuild";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { Miniflare } from "miniflare";
 import { applyMigrationsToD1 } from "./lib/d1-migrations.mjs";
 
@@ -8,10 +9,26 @@ const migrationsDir = new URL("../apps/worker/migrations/", import.meta.url).pat
 const bundledScriptPath = new URL("../outputs/worker-safety-smoke.mjs", import.meta.url).pathname;
 const ADMIN_TOKEN = "worker-safety-admin-token";
 const DEVICE_TOKEN = "worker-safety-device-token";
+const CF_ACCESS_TEAM_DOMAIN = "https://magicxiaomin.cloudflareaccess.com";
+const CF_ACCESS_AUD = "worker-safety-access-aud";
+
+const { publicKey: accessPublicKey, privateKey: accessPrivateKey } = await generateKeyPair("RS256");
+const accessPublicJwk = await exportJWK(accessPublicKey);
+accessPublicJwk.kid = "worker-safety-access-key";
+const CF_ACCESS_JWKS_JSON = JSON.stringify({ keys: [accessPublicJwk] });
+const ACCESS_JWT = await new SignJWT({ email: "magicxiaomin@gmail.com", type: "app" })
+  .setProtectedHeader({ alg: "RS256", kid: "worker-safety-access-key" })
+  .setIssuer(CF_ACCESS_TEAM_DOMAIN)
+  .setAudience(CF_ACCESS_AUD)
+  .setSubject("worker-safety-user")
+  .setIssuedAt()
+  .setExpirationTime("10m")
+  .sign(accessPrivateKey);
 
 function authHeaders(role) {
   if (role === "admin") return { authorization: `Bearer ${ADMIN_TOKEN}` };
   if (role === "device") return { authorization: `Bearer ${DEVICE_TOKEN}` };
+  if (role === "access") return { "cf-access-jwt-assertion": ACCESS_JWT };
   if (role === "wrong") return { authorization: "Bearer wrong-worker-safety-token" };
   return {};
 }
@@ -63,7 +80,7 @@ const mf = new Miniflare({
   compatibilityDate: "2026-05-30",
   d1Databases: { DB: "DB" },
   kvNamespaces: { STATE: "STATE" },
-  bindings: { ADMIN_TOKEN, DEVICE_TOKEN },
+  bindings: { ADMIN_TOKEN, DEVICE_TOKEN, CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD, CF_ACCESS_JWKS_JSON },
 });
 
 try {
@@ -93,7 +110,9 @@ try {
   await expectStatus(mf, "pull requires token", "/v1/tasks/pull?deviceId=missing&limit=1", { method: "GET" }, null, [401]);
   await expectStatus(mf, "wrong token rejected", "/v1/tasks/pull?deviceId=missing&limit=1", { method: "GET" }, "wrong", [401]);
   await expectStatus(mf, "users requires admin token", "/v1/users", { method: "GET" }, null, [401]);
+  await expectStatus(mf, "valid Access JWT can call admin route", "/v1/users", { method: "GET" }, "access", [200]);
   await expectStatus(mf, "device token cannot call users route", "/v1/users", { method: "GET" }, "device", [401, 403]);
+  await expectStatus(mf, "Access JWT cannot call device route", "/v1/tasks/pull?deviceId=missing&limit=1", { method: "GET" }, "access", [401, 403]);
   await expectStatus(mf, "device token cannot call admin route", "/v1/campaigns", {
     method: "POST",
     body: JSON.stringify({ title: "blocked", message: "blocked", contacts: [] }),
