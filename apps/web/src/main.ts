@@ -7,6 +7,12 @@ const AUTH_VALUE = "unlocked";
 
 type Row = Record<string, unknown>;
 type PageKey = "overview" | "dispatch" | "tasks" | "ledger" | "devices" | "users";
+type DispatchResult = {
+  deviceId: string;
+  ok: boolean;
+  message: string;
+  taskCount?: number;
+};
 
 type Dashboard = {
   ok: boolean;
@@ -39,6 +45,14 @@ const state = {
   deviceFilter: "",
   selectedTaskId: "",
   formContacts: "",
+  dispatchUserId: localStorage.getItem("dm.dispatchUserId") || "",
+  dispatchSelectedDeviceIds: [] as string[],
+  dispatchSelectionInitialized: false,
+  dispatchContactOverrides: {} as Record<string, string>,
+  deviceContactsById: {} as Record<string, Row[]>,
+  deviceContactsLoading: {} as Record<string, boolean>,
+  deviceContactsError: {} as Record<string, string>,
+  dispatchResults: [] as DispatchResult[],
   showTestData: localStorage.getItem("dm.showTestData") === "1",
   loading: false,
   message: "",
@@ -165,45 +179,105 @@ function setPage(page: PageKey) {
   render();
 }
 
+function parseContactsText(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [nameOrJid, maybeJid] = line.split(",").map((part) => part.trim());
+      return maybeJid ? { name: nameOrJid, jid: maybeJid } : { jid: nameOrJid };
+    })
+    .filter((contact) => contact.jid);
+}
+
+function contactsToText(contacts: Row[]) {
+  return contacts
+    .map((contact) => {
+      const jid = textCell(contact.wa_jid);
+      if (jid === "-") return "";
+      const name = textCell(contact.display_name);
+      return name === "-" ? jid : `${name}, ${jid}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function recipientTextForDevice(deviceId: string) {
+  if (Object.prototype.hasOwnProperty.call(state.dispatchContactOverrides, deviceId)) {
+    return state.dispatchContactOverrides[deviceId] || "";
+  }
+  return contactsToText(state.deviceContactsById[deviceId] || []);
+}
+
+function campaignTitleForDevice(baseTitle: string, device: Row) {
+  const deviceName = String(device.device_name || "").trim() || String(device.id || "");
+  return `${baseTitle} · ${deviceName}`;
+}
+
 async function createCampaign(event: Event) {
   event.preventDefault();
   const form = event.currentTarget as HTMLFormElement;
   const data = new FormData(form);
-  const contactLines = String(data.get("contacts") || "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const contacts = contactLines.map((line) => {
-    const [nameOrJid, maybeJid] = line.split(",").map((part) => part.trim());
-    return maybeJid ? { name: nameOrJid, jid: maybeJid } : { jid: nameOrJid };
-  });
-  const deviceId = String(data.get("deviceId") || "").trim();
-  if (!deviceId) {
-    state.message = "创建失败：无可用设备:请先在 Android 端登录账号";
+  const dataSnapshot = visibleData();
+  const selectedIds = new Set(state.dispatchSelectedDeviceIds);
+  const selectedDevices = dataSnapshot.devices
+    .filter((device) => selectedIds.has(String(device.id || "")))
+    .filter(isDeviceReady);
+  if (!selectedDevices.length) {
+    state.message = "创建失败：无可用设备:请先在 Android 端登录账号或等待发送安全恢复";
     render();
     return;
   }
 
   state.loading = true;
+  state.dispatchResults = [];
   render();
   try {
-    const result = await api<{ campaign: { id: string; taskCount: number } }>("/v1/campaigns", {
-      method: "POST",
-      body: JSON.stringify({
-        title: data.get("title"),
-        message: data.get("message"),
-        contacts,
-        points: Number(data.get("points") || 10),
-        deviceId,
-      }),
-    });
-    state.message = `任务已创建：${result.campaign.taskCount} 条，等待设备轮询领取`;
-    state.formContacts = "";
-    form.reset();
-    state.page = "tasks";
-    await refresh(state.message);
+    const title = String(data.get("title") || "").trim();
+    const message = String(data.get("message") || "").trim();
+    const points = Number(data.get("points") || 10);
+    const results: DispatchResult[] = [];
+
+    for (const device of selectedDevices) {
+      const deviceId = String(device.id || "");
+      const contacts = parseContactsText(recipientTextForDevice(deviceId));
+      if (!contacts.length) {
+        results.push({ deviceId, ok: false, message: "没有可下发收件人" });
+        state.dispatchResults = [...results];
+        render();
+        continue;
+      }
+      try {
+        const result = await api<{ campaign: { id: string; taskCount: number } }>("/v1/campaigns", {
+          method: "POST",
+          body: JSON.stringify({
+            title: campaignTitleForDevice(title, device),
+            message,
+            contacts,
+            points,
+            deviceId,
+          }),
+        });
+        results.push({
+          deviceId,
+          ok: true,
+          taskCount: result.campaign.taskCount,
+          message: `已创建 ${result.campaign.taskCount} 条`,
+        });
+      } catch (error) {
+        results.push({ deviceId, ok: false, message: error instanceof Error ? error.message : String(error) });
+      }
+      state.dispatchResults = [...results];
+      render();
+    }
+
+    const successCount = results.filter((result) => result.ok).length;
+    const failedCount = results.length - successCount;
+    state.message = `下发完成：${successCount} 台成功，${failedCount} 台失败`;
+    if (failedCount === 0) state.dispatchResults = results;
   } catch (error) {
-    state.message = `创建失败：${error instanceof Error ? error.message : String(error)}`;
+    state.message = `下发失败：${error instanceof Error ? error.message : String(error)}`;
   } finally {
     state.loading = false;
     render();
@@ -339,6 +413,89 @@ function isDeviceReady(device: Row) {
   const safetyStatus = String(device.safety_status || "");
   const retryAfter = Number(device.safety_retry_after_seconds || 0);
   return status === "online" && (safetyStatus === "ready" || safetyStatus === "unknown" || safetyStatus === "") && retryAfter === 0;
+}
+
+function dispatchDevicesForUser(data: ReturnType<typeof visibleData>, userId: string) {
+  return data.devices
+    .filter(isAccountScopedDevice)
+    .filter((device) => String(device.user_id || "") === userId);
+}
+
+function readyDispatchDevicesForUser(data: ReturnType<typeof visibleData>, userId: string) {
+  return dispatchDevicesForUser(data, userId).filter(isDeviceReady);
+}
+
+function deviceDisplayName(device: Row) {
+  return String(device.device_name || "").trim() || String(device.id || "");
+}
+
+function setDispatchUser(userId: string, data: ReturnType<typeof visibleData>) {
+  state.dispatchUserId = userId;
+  localStorage.setItem("dm.dispatchUserId", userId);
+  state.dispatchSelectedDeviceIds = readyDispatchDevicesForUser(data, userId).map((device) => String(device.id || ""));
+  state.dispatchSelectionInitialized = true;
+  state.dispatchContactOverrides = {};
+  state.dispatchResults = [];
+  void loadDeviceContacts(state.dispatchSelectedDeviceIds);
+}
+
+function syncDispatchSelection(data: ReturnType<typeof visibleData>) {
+  const users = data.users;
+  const availableUserIds = new Set(users.map((user) => String(user.id || "")));
+  if (!state.dispatchUserId || !availableUserIds.has(state.dispatchUserId)) {
+    const firstUserWithReadyDevice = users.find((user) => readyDispatchDevicesForUser(data, String(user.id || "")).length > 0);
+    const firstUser = firstUserWithReadyDevice || users[0];
+    if (firstUser) setDispatchUser(String(firstUser.id || ""), data);
+  }
+
+  const userDeviceIds = new Set(dispatchDevicesForUser(data, state.dispatchUserId).map((device) => String(device.id || "")));
+  const readyDeviceIds = new Set(readyDispatchDevicesForUser(data, state.dispatchUserId).map((device) => String(device.id || "")));
+  state.dispatchSelectedDeviceIds = state.dispatchSelectedDeviceIds
+    .filter((deviceId) => userDeviceIds.has(deviceId) && readyDeviceIds.has(deviceId));
+  if (!state.dispatchSelectionInitialized && !state.dispatchSelectedDeviceIds.length && readyDeviceIds.size > 0) {
+    state.dispatchSelectedDeviceIds = Array.from(readyDeviceIds);
+    state.dispatchSelectionInitialized = true;
+  }
+  void loadDeviceContacts(state.dispatchSelectedDeviceIds);
+}
+
+function setDispatchDeviceSelected(deviceId: string, checked: boolean) {
+  const selected = new Set(state.dispatchSelectedDeviceIds);
+  if (checked) selected.add(deviceId);
+  else selected.delete(deviceId);
+  state.dispatchSelectedDeviceIds = Array.from(selected);
+  state.dispatchSelectionInitialized = true;
+  state.dispatchResults = [];
+  void loadDeviceContacts(state.dispatchSelectedDeviceIds);
+  render();
+}
+
+async function loadDeviceContacts(deviceIds: string[]) {
+  const missing = deviceIds.filter((deviceId) => (
+    state.deviceContactsById[deviceId] === undefined
+    && !state.deviceContactsLoading[deviceId]
+    && state.adminToken
+  ));
+  if (!missing.length) return;
+
+  for (const deviceId of missing) {
+    state.deviceContactsLoading[deviceId] = true;
+    state.deviceContactsError[deviceId] = "";
+  }
+  render();
+
+  await Promise.all(missing.map(async (deviceId) => {
+    try {
+      const result = await api<{ contacts: Row[] }>(`/v1/contacts?deviceId=${encodeURIComponent(deviceId)}`);
+      state.deviceContactsById[deviceId] = result.contacts || [];
+    } catch (error) {
+      state.deviceContactsError[deviceId] = error instanceof Error ? error.message : String(error);
+      state.deviceContactsById[deviceId] = [];
+    } finally {
+      state.deviceContactsLoading[deviceId] = false;
+    }
+  }));
+  render();
 }
 
 function sumPoints(rows: Row[]) {
@@ -601,74 +758,114 @@ function renderOverview(data: ReturnType<typeof visibleData>) {
 }
 
 function renderDispatch(data: ReturnType<typeof visibleData>) {
-  const contactText = data.contacts
-    .slice(0, 8)
-    .map((contact) => `${textCell(contact.display_name || contact.wa_jid)}, ${textCell(contact.wa_jid)}`)
-    .join("\n");
-  const visibleContacts = data.contacts.filter((contact) => {
-    const query = state.contactFilter.trim().toLowerCase();
-    if (!query) return true;
-    return `${textCell(contact.display_name)} ${textCell(contact.wa_jid)}`.toLowerCase().includes(query);
-  });
-  const deviceOptions = data.devices.filter(isAccountScopedDevice);
-  const defaultDevice = deviceOptions.find(isDeviceReady) || deviceOptions[0];
-  const hasRealDevice = Boolean(defaultDevice);
+  syncDispatchSelection(data);
+  const users = data.users;
+  const userDevices = dispatchDevicesForUser(data, state.dispatchUserId);
+  const readyDevices = readyDispatchDevicesForUser(data, state.dispatchUserId);
+  const selectedIds = new Set(state.dispatchSelectedDeviceIds);
+  const selectedDevices = readyDevices.filter((device) => selectedIds.has(String(device.id || "")));
+  const hasReadyDevice = readyDevices.length > 0;
+  const loadingContacts = selectedDevices.some((device) => state.deviceContactsLoading[String(device.id || "")]);
+  const canSubmit = Boolean(state.dispatchUserId) && selectedDevices.length > 0 && !loadingContacts;
 
   renderShell([
-    pageHead("创建任务", "选择真实发送设备与联系人，创建后由 Android 轮询领取"),
+    pageHead("创建任务", "按用户选择设备；默认使用每台设备自己同步的联系人，创建后由 Android 轮询领取"),
     el("section", { class: "grid two" }, [
       card("下发配置", [
         el("form", { class: "task-form", onsubmit: createCampaign }, [
-          el("label", {}, [el("span", { text: "标题" }), el("input", { name: "title", required: true, value: "MVP 真机测试" })]),
-          el("label", {}, [el("span", { text: "消息" }), el("textarea", { name: "message", required: true, rows: 6, placeholder: "发给小号 +85255804693 的测试消息" })]),
           el("label", {}, [
-            el("span", { text: "联系人，每行：名称, jid" }),
-            el("textarea", {
-              name: "contacts",
-              required: true,
-              rows: 5,
-              value: state.formContacts,
-              placeholder: contactText || "小号 +85255804693, 85255804693@s.whatsapp.net",
-              oninput: (event: Event) => { state.formContacts = (event.currentTarget as HTMLTextAreaElement).value; },
-            }),
-          ]),
-          el("div", { class: "form-row" }, [
-            el("label", {}, [el("span", { text: "积分" }), el("input", { name: "points", type: "number", value: "10", min: "0" })]),
-            el("label", {}, [
-              el("span", { text: "设备" }),
-              el("select", {
-                name: "deviceId",
-                value: defaultDevice ? String(defaultDevice.id) : "",
-                required: true,
-                disabled: !hasRealDevice,
-                placeholder: "android-wa-...",
-              }, [
-                ...deviceOptions.map((device) => el("option", { value: String(device.id), text: `${device.id} · ${deviceSafety(device)}` })),
-                hasRealDevice ? "" : el("option", { value: "", text: "无可用设备" }),
-              ]),
+            el("span", { text: "用户" }),
+            el("select", {
+              name: "userId",
+              "aria-label": "用户",
+              value: state.dispatchUserId,
+              disabled: !users.length,
+              onchange: (event: Event) => {
+                setDispatchUser((event.currentTarget as HTMLSelectElement).value, data);
+                render();
+              },
+            }, [
+              users.length ? "" : el("option", { value: "", text: "暂无用户" }),
+              ...users.map((user) => el("option", { value: String(user.id), text: `${textCell(user.display_name)} (${textCell(user.id)})` })),
             ]),
           ]),
-          hasRealDevice ? "" : el("div", { class: "form-hint warning", text: "无可用设备:请先在 Android 端登录账号" }),
-          el("button", { class: "btn primary wide", type: "submit", disabled: !hasRealDevice, text: state.loading ? "创建中" : "创建并下发" }),
+          users.length ? "" : el("div", { class: "form-hint warning", text: "暂无用户:请先在“用户”页创建并在“设备管理”分配设备" }),
+          el("label", {}, [el("span", { text: "标题" }), el("input", { name: "title", required: true, value: "MVP 真机测试" })]),
+          el("label", {}, [el("span", { text: "消息" }), el("textarea", { name: "message", required: true, rows: 6, placeholder: "发给该用户设备联系人的固定文本" })]),
+          el("div", { class: "form-row" }, [
+            el("label", {}, [el("span", { text: "积分" }), el("input", { name: "points", type: "number", value: "10", min: "0" })]),
+            el("div", { class: "form-hint", text: "每台选中设备会单独创建一个 campaign；收件人来自该设备同步数据，可逐台覆盖。" }),
+          ]),
+          hasReadyDevice ? "" : el("div", { class: "form-hint warning", text: "无可用设备:请先在 Android 端登录账号或等待发送安全恢复" }),
+          selectedDevices.length ? "" : el("div", { class: "form-hint warning", text: "请至少选择一台发送安全为可发送的用户设备" }),
+          loadingContacts ? el("div", { class: "form-hint", text: "正在读取设备联系人，请稍候" }) : "",
+          el("button", { class: "btn primary wide", type: "submit", disabled: !canSubmit || state.loading, text: state.loading ? "下发中" : "创建并下发" }),
         ]),
       ], undefined, "不做 AI 改写，不承诺订阅者过滤；只创建真实 Worker task。"),
-      card("联系人", [
-        el("input", {
-          class: "search-input",
-          placeholder: "搜索备注或 JID",
-          value: state.contactFilter,
-          oninput: (event: Event) => {
-            state.contactFilter = (event.currentTarget as HTMLInputElement).value;
-            render();
-          },
-        }),
-        table(["备注", "JID", "操作"], visibleContacts.map((contact) => [
-          textCell(contact.display_name),
-          el("span", { class: "mono", text: textCell(contact.wa_jid) }),
-          el("button", { type: "button", class: "btn outline sm", text: "填入", onclick: () => useContact(contact) }),
-        ])),
-      ], undefined, "Android 同步到云端的联系人；也可手动填写 JID。"),
+      card("用户设备与收件人", [
+        el("div", { class: "device-list" }, userDevices.length ? userDevices.map((device) => {
+          const deviceId = String(device.id || "");
+          const ready = isDeviceReady(device);
+          const selected = selectedIds.has(deviceId);
+          return el("label", { class: ready ? "device-option" : "device-option disabled" }, [
+            el("input", {
+              type: "checkbox",
+              "aria-label": `选择设备 ${deviceId}`,
+              checked: selected,
+              disabled: !ready,
+              onchange: (event: Event) => setDispatchDeviceSelected(deviceId, (event.currentTarget as HTMLInputElement).checked),
+            }),
+            el("span", {}, [
+              el("strong", { text: deviceDisplayName(device) }),
+              el("span", { class: "mono muted block", text: deviceId }),
+            ]),
+            badge(deviceActivityLabel(device), statusTone(device.status)),
+            badge(deviceSafety(device), statusTone(device.safety_status)),
+          ]);
+        }) : [
+          el("div", { class: "form-hint warning", text: "该用户暂无 android-wa-* 设备" }),
+        ]),
+        el("div", { class: "recipient-list" }, selectedDevices.map((device) => {
+          const deviceId = String(device.id || "");
+          const contactCount = state.deviceContactsById[deviceId]?.length || 0;
+          const loading = state.deviceContactsLoading[deviceId];
+          const error = state.deviceContactsError[deviceId];
+          return el("section", { class: "recipient-panel" }, [
+            el("div", { class: "recipient-head" }, [
+              el("div", {}, [
+                el("strong", { text: deviceDisplayName(device) }),
+                el("span", { class: "mono muted block", text: deviceId }),
+              ]),
+              badge(loading ? "读取联系人" : `${contactCount} 个联系人`, loading ? "accent" : contactCount ? "success" : "warning"),
+            ]),
+            error ? el("div", { class: "form-hint warning", text: `读取联系人失败：${error}` }) : "",
+            el("label", {}, [
+              el("span", { text: "收件人，每行：名称, jid" }),
+              el("textarea", {
+                "aria-label": `收件人 ${deviceId}`,
+                rows: 5,
+                value: recipientTextForDevice(deviceId),
+                placeholder: "可手动覆盖，例如：小号, 85255804693@s.whatsapp.net",
+                oninput: (event: Event) => {
+                  state.dispatchContactOverrides[deviceId] = (event.currentTarget as HTMLTextAreaElement).value;
+                  state.dispatchResults = [];
+                },
+              }),
+            ]),
+          ]);
+        })),
+      ], undefined, "默认从 B17a 的 /v1/contacts?deviceId= 读取；数据刷新每 5-10s 有延迟。"),
     ]),
+    state.dispatchResults.length ? card("下发结果", [
+      table(["设备", "结果", "说明"], state.dispatchResults.map((result) => [
+        el("span", { class: "mono", text: result.deviceId }),
+        badge(result.ok ? "成功" : "失败", result.ok ? "success" : "danger"),
+        el("span", { text: `${result.deviceId}：${result.message}` }),
+      ])),
+      state.dispatchResults.some((result) => !result.ok)
+        ? el("div", { class: "form-hint warning", text: "失败设备可调整收件人或安全状态后重试" })
+        : "",
+    ]) : "",
   ]);
 }
 

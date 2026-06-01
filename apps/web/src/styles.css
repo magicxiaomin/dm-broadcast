@@ -665,6 +665,52 @@ label > span {
   min-width: 190px;
 }
 
+.device-list,
+.recipient-list {
+  display: grid;
+  gap: 10px;
+}
+
+.recipient-list {
+  margin-top: 14px;
+}
+
+.device-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--background));
+}
+
+.device-option input {
+  width: auto;
+}
+
+.device-option.disabled {
+  opacity: 0.7;
+  background: hsl(var(--subtle));
+}
+
+.recipient-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--subtle));
+}
+
+.recipient-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .auth-screen {
   min-height: 100vh;
   display: grid;
