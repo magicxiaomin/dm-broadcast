@@ -516,6 +516,17 @@ select:focus {
   box-shadow: 0 0 0 3px hsl(var(--primary) / 0.14);
 }
 
+input.needs-token {
+  border-color: hsl(var(--danger));
+  background: hsl(var(--danger-soft));
+}
+
+select:disabled,
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 textarea {
   resize: vertical;
   line-height: 1.55;
@@ -542,6 +553,22 @@ label > span {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
   gap: 12px;
+}
+
+.form-hint {
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--neutral-soft-border));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--neutral-soft));
+  color: hsl(var(--neutral-soft-foreground));
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.form-hint.warning {
+  border-color: hsl(var(--warning-soft-border));
+  background: hsl(var(--warning-soft));
+  color: hsl(var(--warning-soft-foreground));
 }
 
 .search-input {

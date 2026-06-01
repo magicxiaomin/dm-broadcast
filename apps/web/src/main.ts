@@ -10,12 +10,6 @@ type PageKey = "overview" | "dispatch" | "tasks" | "ledger" | "devices" | "users
 
 type Dashboard = {
   ok: boolean;
-  summary: {
-    devices: number;
-    campaigns: number;
-    points: number;
-    tasksByStatus: Array<{ status: string; count: number }>;
-  };
   devices: Row[];
   campaigns: Row[];
   tasks: Row[];
@@ -48,6 +42,7 @@ const state = {
   showTestData: localStorage.getItem("dm.showTestData") === "1",
   loading: false,
   message: "",
+  needsAdminToken: false,
   authMessage: "",
 };
 
@@ -83,7 +78,11 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || data.error || `${res.status}`);
+  if (!res.ok) {
+    const error = new Error(data.message || data.error || `${res.status}`) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
+  }
   return data as T;
 }
 
@@ -100,8 +99,15 @@ async function refresh(message = "已刷新") {
     state.contacts = contacts.contacts || [];
     state.users = users.users || [];
     state.message = message;
+    state.needsAdminToken = false;
   } catch (error) {
-    state.message = `刷新失败：${error instanceof Error ? error.message : String(error)}`;
+    const status = error && typeof error === "object" && "status" in error ? Number((error as { status?: number }).status || 0) : 0;
+    if (status === 401 || !state.adminToken) {
+      state.needsAdminToken = true;
+      state.message = "请在顶栏填写 ADMIN_TOKEN 后重试";
+    } else {
+      state.message = `刷新失败：${error instanceof Error ? error.message : String(error)}`;
+    }
   } finally {
     state.loading = false;
     render();
@@ -173,7 +179,7 @@ async function createCampaign(event: Event) {
   });
   const deviceId = String(data.get("deviceId") || "").trim();
   if (!deviceId) {
-    state.message = "创建失败：请选择设备";
+    state.message = "创建失败：无可用设备:请先在 Android 端登录账号";
     render();
     return;
   }
@@ -335,15 +341,6 @@ function isDeviceReady(device: Row) {
   return status === "online" && (safetyStatus === "ready" || safetyStatus === "unknown" || safetyStatus === "") && retryAfter === 0;
 }
 
-function defaultDeviceId() {
-  const devices = state.dashboard?.devices || [];
-  return String(
-    devices.find((device) => isAccountScopedDevice(device) && isDeviceReady(device))?.id
-      || devices.find((device) => isAccountScopedDevice(device))?.id
-      || "android-prototype",
-  );
-}
-
 function sumPoints(rows: Row[]) {
   return rows.reduce((total, entry) => total + Number(entry.points || 0), 0);
 }
@@ -463,7 +460,7 @@ function renderAuth() {
 function statusChipForTask(task: Row) {
   const status = String(task.status || "");
   const label = status === "read" ? "已读"
-    : status === "sent" ? "已发送"
+    : status === "sent" ? "待确认"
       : status === "claimed" ? "已领取"
         : status === "pending" ? "待发送"
           : status === "failed" ? "失败"
@@ -527,6 +524,7 @@ function renderShell(content: Node[]) {
             el("input", { name: "api", value: state.apiBase, "aria-label": "API Base" }),
             el("input", {
               name: "adminToken",
+              class: state.needsAdminToken ? "needs-token" : "",
               type: "password",
               value: state.adminToken,
               placeholder: "ADMIN_TOKEN",
@@ -613,6 +611,8 @@ function renderDispatch(data: ReturnType<typeof visibleData>) {
     return `${textCell(contact.display_name)} ${textCell(contact.wa_jid)}`.toLowerCase().includes(query);
   });
   const deviceOptions = data.devices.filter(isAccountScopedDevice);
+  const defaultDevice = deviceOptions.find(isDeviceReady) || deviceOptions[0];
+  const hasRealDevice = Boolean(defaultDevice);
 
   renderShell([
     pageHead("创建任务", "选择真实发送设备与联系人，创建后由 Android 轮询领取"),
@@ -636,13 +636,20 @@ function renderDispatch(data: ReturnType<typeof visibleData>) {
             el("label", {}, [el("span", { text: "积分" }), el("input", { name: "points", type: "number", value: "10", min: "0" })]),
             el("label", {}, [
               el("span", { text: "设备" }),
-              el("select", { name: "deviceId", value: defaultDeviceId(), required: true, placeholder: "android-wa-..." }, [
+              el("select", {
+                name: "deviceId",
+                value: defaultDevice ? String(defaultDevice.id) : "",
+                required: true,
+                disabled: !hasRealDevice,
+                placeholder: "android-wa-...",
+              }, [
                 ...deviceOptions.map((device) => el("option", { value: String(device.id), text: `${device.id} · ${deviceSafety(device)}` })),
-                deviceOptions.length ? "" : el("option", { value: "android-prototype", text: "android-prototype" }),
+                hasRealDevice ? "" : el("option", { value: "", text: "无可用设备" }),
               ]),
             ]),
           ]),
-          el("button", { class: "btn primary wide", type: "submit", text: state.loading ? "创建中" : "创建并下发" }),
+          hasRealDevice ? "" : el("div", { class: "form-hint warning", text: "无可用设备:请先在 Android 端登录账号" }),
+          el("button", { class: "btn primary wide", type: "submit", disabled: !hasRealDevice, text: state.loading ? "创建中" : "创建并下发" }),
         ]),
       ], undefined, "不做 AI 改写，不承诺订阅者过滤；只创建真实 Worker task。"),
       card("联系人", [
