@@ -2,7 +2,7 @@ import "./styles.css";
 
 const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
 const IS_LOCAL_DEV = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-const IS_ACCESS_HOST = window.location.hostname === "whatsapp.novelvela.com" || window.location.hostname.endsWith(".dm-broadcast-web.pages.dev");
+const IS_ACCESS_HOST = window.location.hostname === "whatsapp.dramavela.com" || window.location.hostname.endsWith(".dm-broadcast-web.pages.dev");
 const API_DEFAULT = env.VITE_API_BASE || (IS_ACCESS_HOST ? "/api" : "https://dm-broadcast-api.magicxiaomin.workers.dev");
 
 type Row = Record<string, unknown>;

@@ -14,8 +14,8 @@
 - 现状：`/health` 公开；运营路由需 `ADMIN_TOKEN`；设备路由需共享 `DEVICE_TOKEN`；二者均通过 `Authorization: Bearer <token>` 传递。
 - 覆盖：无 token / 错 token / 设备 token 调运营路由的拒绝断言已进入 `worker:safety-smoke`。
 
-### B18 · 后台登录 via Cloudflare Access（代码与 Access 配置已完成，DNS 待验证）
-- 现状：运营后台人侧由 Cloudflare Access Email OTP 保护，Allow 邮箱 `magicxiaomin@gmail.com`；运营 Web 使用 `https://whatsapp.novelvela.com`，`/api/*` 同源代理到现有 Worker admin API。Pages custom domain 已创建，但仍等待 `whatsapp.novelvela.com` 的 CNAME 记录完成验证；过渡期 `dm-broadcast-web.pages.dev` 与 `*.dm-broadcast-web.pages.dev` 也被同一个 Access app 保护，避免无 demo 门的公开窗口。
+### B18 · 后台登录 via Cloudflare Access（代码与 Access 配置已完成，域名已 active）
+- 现状：运营后台人侧由 Cloudflare Access Email OTP 保护，Allow 邮箱 `magicxiaomin@gmail.com`；运营 Web 使用 `https://whatsapp.dramavela.com`，`/api/*` 同源代理到现有 Worker admin API。Pages custom domain 已 active；过渡期 `dm-broadcast-web.pages.dev` 与 `*.dm-broadcast-web.pages.dev` 也被同一个 Access app 保护，避免无 demo 门的公开窗口。
 - Worker 运营路由双接受：`ADMIN_TOKEN`（脚本/本地/CI 兜底）或合法 `Cf-Access-Jwt-Assertion`（jose 验签 + `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` 校验）。
 - 设备路由继续只接受共享 `DEVICE_TOKEN`，仍走 `dm-broadcast-api.magicxiaomin.workers.dev`，不加交互式 Access。
 - Web 已移除 demo 口令弹框；线上无需手填 ADMIN_TOKEN，本地开发仍可用顶栏 token 兜底。
