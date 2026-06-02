@@ -3,6 +3,10 @@ main = "src/index.ts"
 compatibility_date = "2026-05-30"
 workers_dev = true
 
+[vars]
+CF_ACCESS_TEAM_DOMAIN = "https://magicxiaomin.cloudflareaccess.com"
+CF_ACCESS_AUD = "989fa405194f68c6d93119018b92e881659ba28dafd8b4f787a8c2a02ad4d48d"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "dm_broadcast_mvp"

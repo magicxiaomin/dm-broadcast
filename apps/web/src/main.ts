@@ -1,9 +1,9 @@
 import "./styles.css";
 
-const API_DEFAULT = "https://dm-broadcast-api.magicxiaomin.workers.dev";
-const DEMO_PASSWORD = ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_DEMO_PASSWORD || "dm-demo-2026").trim();
-const AUTH_STORAGE_KEY = "dm.demoAuth";
-const AUTH_VALUE = "unlocked";
+const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
+const IS_LOCAL_DEV = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+const IS_ACCESS_HOST = window.location.hostname === "whatsapp.dramavela.com" || window.location.hostname.endsWith(".dm-broadcast-web.pages.dev");
+const API_DEFAULT = env.VITE_API_BASE || (IS_ACCESS_HOST ? "/api" : "https://dm-broadcast-api.magicxiaomin.workers.dev");
 
 type Row = Record<string, unknown>;
 type PageKey = "overview" | "dispatch" | "tasks" | "ledger" | "devices" | "users";
@@ -33,7 +33,6 @@ const NAV: Array<{ key: PageKey; label: string; desc: string }> = [
 ];
 
 const state = {
-  authenticated: sessionStorage.getItem(AUTH_STORAGE_KEY) === AUTH_VALUE,
   page: (localStorage.getItem("dm.page") as PageKey) || "overview",
   apiBase: localStorage.getItem("dm.apiBase") || API_DEFAULT,
   adminToken: localStorage.getItem("dm.adminToken") || "",
@@ -56,8 +55,7 @@ const state = {
   showTestData: localStorage.getItem("dm.showTestData") === "1",
   loading: false,
   message: "",
-  needsAdminToken: false,
-  authMessage: "",
+  needsOperatorAuth: false,
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -83,8 +81,12 @@ function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const requestUrl = `${state.apiBase}${path}`;
+  const isRelativeApi = state.apiBase.startsWith("/");
+  const isSameOriginApi = isRelativeApi || new URL(requestUrl, window.location.origin).origin === window.location.origin;
   const res = await fetch(`${state.apiBase}${path}`, {
     ...init,
+    credentials: isSameOriginApi ? "same-origin" : "omit",
     headers: {
       "content-type": "application/json",
       ...(state.adminToken ? { authorization: `Bearer ${state.adminToken}` } : {}),
@@ -113,12 +115,12 @@ async function refresh(message = "已刷新") {
     state.contacts = contacts.contacts || [];
     state.users = users.users || [];
     state.message = message;
-    state.needsAdminToken = false;
+    state.needsOperatorAuth = false;
   } catch (error) {
     const status = error && typeof error === "object" && "status" in error ? Number((error as { status?: number }).status || 0) : 0;
-    if (status === 401 || !state.adminToken) {
-      state.needsAdminToken = true;
-      state.message = "请在顶栏填写 ADMIN_TOKEN 后重试";
+    if (status === 401) {
+      state.needsOperatorAuth = true;
+      state.message = IS_LOCAL_DEV ? "本地开发请填写 ADMIN_TOKEN；线上请通过 Cloudflare Access 登录" : "请通过 Cloudflare Access 登录后台";
     } else {
       state.message = `刷新失败：${error instanceof Error ? error.message : String(error)}`;
     }
@@ -474,7 +476,6 @@ async function loadDeviceContacts(deviceIds: string[]) {
   const missing = deviceIds.filter((deviceId) => (
     state.deviceContactsById[deviceId] === undefined
     && !state.deviceContactsLoading[deviceId]
-    && state.adminToken
   ));
   if (!missing.length) return;
 
@@ -563,57 +564,6 @@ function pageHead(title: string, desc: string, right?: Node | string) {
   ]);
 }
 
-function unlock(event: Event) {
-  event.preventDefault();
-  const form = event.currentTarget as HTMLFormElement;
-  const input = form.elements.namedItem("password") as HTMLInputElement;
-  if (input.value.trim() !== DEMO_PASSWORD) {
-    state.authMessage = "密码不正确";
-    input.select();
-    renderAuth();
-    return;
-  }
-  sessionStorage.setItem(AUTH_STORAGE_KEY, AUTH_VALUE);
-  state.authenticated = true;
-  state.authMessage = "";
-  render();
-  refresh("已解锁后台");
-}
-
-function lock() {
-  sessionStorage.removeItem(AUTH_STORAGE_KEY);
-  state.authenticated = false;
-  state.dashboard = null;
-  state.contacts = [];
-  state.message = "";
-  renderAuth();
-}
-
-function renderAuth() {
-  app.replaceChildren(
-    el("main", { class: "auth-screen" }, [
-      el("section", { class: "auth-panel" }, [
-        el("div", { class: "brand auth-brand" }, [
-          el("div", { class: "brand-mark", text: "DM" }),
-          el("div", {}, [el("strong", { text: "DM Broadcast" }), el("span", { text: "演示后台访问确认" })]),
-        ]),
-        el("div", { class: "auth-copy" }, [
-          el("h1", { text: "请输入演示密码" }),
-          el("p", { text: "当前后台可以创建真实任务。演示阶段先用简单密码避免误访问和误操作。" }),
-        ]),
-        el("form", { class: "auth-form", onsubmit: unlock }, [
-          el("label", {}, [
-            el("span", { text: "访问密码" }),
-            el("input", { name: "password", type: "password", autocomplete: "current-password", autofocus: true, required: true }),
-          ]),
-          state.authMessage ? el("div", { class: "auth-error", text: state.authMessage }) : el("div", { class: "auth-error", text: " " }),
-          el("button", { class: "btn primary wide", type: "submit", text: "进入后台" }),
-        ]),
-      ]),
-    ]),
-  );
-}
-
 function statusChipForTask(task: Row) {
   const status = String(task.status || "");
   const label = status === "read" ? "已读"
@@ -671,23 +621,23 @@ function renderShell(content: Node[]) {
             event.preventDefault();
             const form = event.currentTarget as HTMLFormElement;
             const input = form.elements.namedItem("api") as HTMLInputElement;
-            const tokenInput = form.elements.namedItem("adminToken") as HTMLInputElement;
+            const tokenInput = form.elements.namedItem("adminToken") as HTMLInputElement | null;
             state.apiBase = input.value.replace(/\/$/, "");
-            state.adminToken = tokenInput.value.trim();
+            state.adminToken = tokenInput?.value.trim() || "";
             localStorage.setItem("dm.apiBase", state.apiBase);
             localStorage.setItem("dm.adminToken", state.adminToken);
             refresh();
           } }, [
             el("input", { name: "api", value: state.apiBase, "aria-label": "API Base" }),
-            el("input", {
+            IS_LOCAL_DEV ? el("input", {
               name: "adminToken",
-              class: state.needsAdminToken ? "needs-token" : "",
+              class: state.needsOperatorAuth ? "needs-token" : "",
               type: "password",
               value: state.adminToken,
               placeholder: "ADMIN_TOKEN",
               "aria-label": "ADMIN_TOKEN",
               autocomplete: "off",
-            }),
+            }) : "",
             el("label", { class: "toggle" }, [
               el("input", {
                 type: "checkbox",
@@ -702,7 +652,6 @@ function renderShell(content: Node[]) {
             ]),
             el("button", { type: "submit", class: "btn outline sm", text: "连接" }),
             el("button", { type: "button", class: "btn primary sm", text: state.loading ? "刷新中" : "刷新", onclick: () => refresh() }),
-            el("button", { type: "button", class: "btn ghost sm", text: "锁定", onclick: lock }),
           ]),
         ]),
         el("main", { class: "content" }, [
@@ -1035,7 +984,6 @@ function renderUsers(data: ReturnType<typeof visibleData>) {
 }
 
 function render() {
-  if (!state.authenticated) return renderAuth();
   const data = visibleData();
   if (state.page === "dispatch") return renderDispatch(data);
   if (state.page === "tasks") return renderTasks(data);
@@ -1046,4 +994,4 @@ function render() {
 }
 
 render();
-if (state.authenticated) refresh();
+refresh();

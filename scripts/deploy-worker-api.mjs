@@ -9,6 +9,8 @@ const config = {
   d1DatabaseId: process.env.DM_D1_DATABASE_ID || "f07a0f16-c6c9-4162-87f7-1e4a68eb9a6f",
   kvNamespaceId: process.env.DM_KV_NAMESPACE_ID || "dfa94c2504bb4beba319ef8e0062a7d5",
   compatibilityDate: process.env.DM_WORKER_COMPATIBILITY_DATE || "2026-05-30",
+  accessTeamDomain: process.env.DM_CF_ACCESS_TEAM_DOMAIN || "https://magicxiaomin.cloudflareaccess.com",
+  accessAud: process.env.DM_CF_ACCESS_AUD || "989fa405194f68c6d93119018b92e881659ba28dafd8b4f787a8c2a02ad4d48d",
 };
 
 const dryRun = process.argv.includes("--dry-run") || process.env.DM_DEPLOY_DRY_RUN === "1";
@@ -52,6 +54,16 @@ const metadata = {
       type: "kv_namespace",
       name: "STATE",
       namespace_id: config.kvNamespaceId,
+    },
+    {
+      type: "plain_text",
+      name: "CF_ACCESS_TEAM_DOMAIN",
+      text: config.accessTeamDomain,
+    },
+    {
+      type: "plain_text",
+      name: "CF_ACCESS_AUD",
+      text: config.accessAud,
     },
     ...(process.env.DM_ADMIN_TOKEN
       ? [

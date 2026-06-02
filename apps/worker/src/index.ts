@@ -1,8 +1,13 @@
+import { createLocalJWKSet, createRemoteJWKSet, jwtVerify, type JSONWebKeySet } from "jose";
+
 export interface Env {
   DB: D1Database;
   STATE: KVNamespace;
   ADMIN_TOKEN?: string;
   DEVICE_TOKEN?: string;
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  CF_ACCESS_AUD?: string;
+  CF_ACCESS_JWKS_JSON?: string;
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
@@ -45,13 +50,17 @@ function notFound() {
 }
 
 type AuthRole = "admin" | "device";
+type JwksResolver = Parameters<typeof jwtVerify>[1];
+
+const remoteJwksCache = new Map<string, JwksResolver>();
+const localJwksCache = new Map<string, JwksResolver>();
 
 function bearerToken(request: Request) {
   const auth = request.headers.get("authorization") || "";
   return auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
 }
 
-function authRole(request: Request, env: Env): AuthRole | null {
+function bearerAuthRole(request: Request, env: Env): AuthRole | null {
   const token = bearerToken(request);
   if (!token) return null;
   if (env.ADMIN_TOKEN && token === env.ADMIN_TOKEN) return "admin";
@@ -59,10 +68,62 @@ function authRole(request: Request, env: Env): AuthRole | null {
   return null;
 }
 
-function requireAuth(request: Request, env: Env, allowed: AuthRole[]) {
-  const role = authRole(request, env);
+function normalizeTeamDomain(teamDomain: string) {
+  const trimmed = teamDomain.trim().replace(/\/$/, "");
+  return trimmed.startsWith("https://") ? trimmed : `https://${trimmed}`;
+}
+
+function accessJwks(env: Env) {
+  if (env.CF_ACCESS_JWKS_JSON) {
+    let jwks = localJwksCache.get(env.CF_ACCESS_JWKS_JSON);
+    if (!jwks) {
+      let parsed: JSONWebKeySet;
+      try {
+        parsed = JSON.parse(env.CF_ACCESS_JWKS_JSON) as JSONWebKeySet;
+      } catch {
+        return null;
+      }
+      jwks = createLocalJWKSet(parsed);
+      localJwksCache.set(env.CF_ACCESS_JWKS_JSON, jwks);
+    }
+    return jwks;
+  }
+
+  const teamDomain = env.CF_ACCESS_TEAM_DOMAIN ? normalizeTeamDomain(env.CF_ACCESS_TEAM_DOMAIN) : "";
+  const certsUrl = teamDomain ? `${teamDomain}/cdn-cgi/access/certs` : "";
+  if (!certsUrl) return null;
+  let jwks = remoteJwksCache.get(certsUrl);
+  if (!jwks) {
+    jwks = createRemoteJWKSet(new URL(certsUrl));
+    remoteJwksCache.set(certsUrl, jwks);
+  }
+  return jwks;
+}
+
+async function hasValidAccessJwt(request: Request, env: Env) {
+  const token = request.headers.get("cf-access-jwt-assertion") || "";
+  const teamDomain = env.CF_ACCESS_TEAM_DOMAIN ? normalizeTeamDomain(env.CF_ACCESS_TEAM_DOMAIN) : "";
+  const audience = env.CF_ACCESS_AUD?.trim() || "";
+  const jwks = accessJwks(env);
+  if (!token || !teamDomain || !audience || !jwks) return false;
+
+  try {
+    await jwtVerify(token, jwks, {
+      issuer: teamDomain,
+      audience,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function requireAuth(request: Request, env: Env, allowed: AuthRole[]) {
+  const role = bearerAuthRole(request, env);
+  if (role) return allowed.includes(role) ? null : forbidden();
+  if (allowed.includes("admin") && await hasValidAccessJwt(request, env)) return null;
   if (!role) return unauthorized();
-  return allowed.includes(role) ? null : forbidden();
+  return forbidden();
 }
 
 function nowMs() {
@@ -1008,28 +1069,29 @@ export default {
     }
 
     const url = new URL(request.url);
+    const pathname = url.pathname.startsWith("/api/") ? url.pathname.slice("/api".length) : url.pathname;
 
-    if (request.method === "GET" && url.pathname === "/health") return health(env);
-    if (request.method === "GET" && url.pathname === "/v1/dashboard") return requireAuth(request, env, ["admin"]) ?? dashboard(env);
-    if (request.method === "GET" && url.pathname === "/v1/devices") return requireAuth(request, env, ["admin"]) ?? listDevices(env);
-    if (request.method === "POST" && url.pathname === "/v1/devices/assign") return requireAuth(request, env, ["admin"]) ?? assignDevice(request, env);
-    if (request.method === "POST" && url.pathname === "/v1/devices/register") return requireAuth(request, env, ["device"]) ?? registerDevice(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/users") return requireAuth(request, env, ["admin"]) ?? listUsers(env);
-    if (request.method === "POST" && url.pathname === "/v1/users") return requireAuth(request, env, ["admin"]) ?? createUser(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/contacts") return requireAuth(request, env, ["admin"]) ?? listContacts(request, env);
-    if (request.method === "POST" && url.pathname === "/v1/contacts/sync") return requireAuth(request, env, ["device"]) ?? syncContacts(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/campaigns") return requireAuth(request, env, ["admin"]) ?? listCampaigns(env);
-    if (request.method === "POST" && url.pathname === "/v1/campaigns") return requireAuth(request, env, ["admin"]) ?? createCampaign(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/tasks") return requireAuth(request, env, ["admin"]) ?? listTasks(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/tasks/pull") return requireAuth(request, env, ["device"]) ?? pullTasks(request, env);
-    if (request.method === "POST" && url.pathname === "/v1/tasks/requeue") return requireAuth(request, env, ["admin"]) ?? requeueTask(request, env);
-    if (request.method === "POST" && url.pathname === "/v1/events") return requireAuth(request, env, ["device"]) ?? recordEvent(request, env);
-    if (request.method === "GET" && url.pathname === "/v1/ledger") return requireAuth(request, env, ["admin"]) ?? listLedger(env);
-    if (url.pathname.startsWith("/v1/admin/")) {
-      if (request.method === "POST" && url.pathname === "/v1/admin/cleanup-test-data") {
-        return requireAuth(request, env, ["admin"]) ?? cleanupTestData(request, env);
+    if (request.method === "GET" && pathname === "/health") return health(env);
+    if (request.method === "GET" && pathname === "/v1/dashboard") return (await requireAuth(request, env, ["admin"])) ?? dashboard(env);
+    if (request.method === "GET" && pathname === "/v1/devices") return (await requireAuth(request, env, ["admin"])) ?? listDevices(env);
+    if (request.method === "POST" && pathname === "/v1/devices/assign") return (await requireAuth(request, env, ["admin"])) ?? assignDevice(request, env);
+    if (request.method === "POST" && pathname === "/v1/devices/register") return (await requireAuth(request, env, ["device"])) ?? registerDevice(request, env);
+    if (request.method === "GET" && pathname === "/v1/users") return (await requireAuth(request, env, ["admin"])) ?? listUsers(env);
+    if (request.method === "POST" && pathname === "/v1/users") return (await requireAuth(request, env, ["admin"])) ?? createUser(request, env);
+    if (request.method === "GET" && pathname === "/v1/contacts") return (await requireAuth(request, env, ["admin"])) ?? listContacts(request, env);
+    if (request.method === "POST" && pathname === "/v1/contacts/sync") return (await requireAuth(request, env, ["device"])) ?? syncContacts(request, env);
+    if (request.method === "GET" && pathname === "/v1/campaigns") return (await requireAuth(request, env, ["admin"])) ?? listCampaigns(env);
+    if (request.method === "POST" && pathname === "/v1/campaigns") return (await requireAuth(request, env, ["admin"])) ?? createCampaign(request, env);
+    if (request.method === "GET" && pathname === "/v1/tasks") return (await requireAuth(request, env, ["admin"])) ?? listTasks(request, env);
+    if (request.method === "GET" && pathname === "/v1/tasks/pull") return (await requireAuth(request, env, ["device"])) ?? pullTasks(request, env);
+    if (request.method === "POST" && pathname === "/v1/tasks/requeue") return (await requireAuth(request, env, ["admin"])) ?? requeueTask(request, env);
+    if (request.method === "POST" && pathname === "/v1/events") return (await requireAuth(request, env, ["device"])) ?? recordEvent(request, env);
+    if (request.method === "GET" && pathname === "/v1/ledger") return (await requireAuth(request, env, ["admin"])) ?? listLedger(env);
+    if (pathname.startsWith("/v1/admin/")) {
+      if (request.method === "POST" && pathname === "/v1/admin/cleanup-test-data") {
+        return (await requireAuth(request, env, ["admin"])) ?? cleanupTestData(request, env);
       }
-      return requireAuth(request, env, ["admin"]) ?? notFound();
+      return (await requireAuth(request, env, ["admin"])) ?? notFound();
     }
 
     return notFound();
